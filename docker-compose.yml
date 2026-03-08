@@ -1,0 +1,16 @@
+# Backend only (separate branch/repo). Uses remote DB on Hostinger VPS.
+# Run from backend directory: docker-compose up -d
+# API: http://localhost:8000  |  Docs: http://localhost:8000/docs
+# Ensure backend/.env has DATABASE_URL (e.g. postgresql+asyncpg://newbalanDev:...@148.230.66.113:5432/newbalanDev)
+
+services:
+  backend:
+    build: .
+    container_name: newbalan-backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://newbalanDev:NewBalan%402025@148.230.66.113:5432/newbalanDev}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

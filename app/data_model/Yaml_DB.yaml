@@ -1,0 +1,640 @@
+database:
+  name: medical_shop_pharmacy
+  type: postgresql
+
+  conventions:
+    id_type: UUID
+    datetime_type: TIMESTAMPTZ
+    money_type: NUMERIC(10,2)
+
+    audit_fields_all_tables:
+      created_by:
+        type: UUID
+        example: users.id
+      created_at:
+        type: TIMESTAMPTZ
+        example: "2026-02-01T10:30:00Z"
+      created_ip:
+        type: VARCHAR(45)
+        example: "192.168.1.100"
+      updated_by:
+        type: UUID
+        example: users.id
+      updated_at:
+        type: TIMESTAMPTZ
+        example: "2026-02-01T11:00:00Z"
+      updated_ip:
+        type: VARCHAR(45)
+        example: "192.168.1.100"
+      is_deleted:
+        type: BOOLEAN
+        example: false
+
+    master_only_field:
+      is_active:
+        type: BOOLEAN
+        example: true
+
+  tables:
+
+    roles:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "b1f9..."
+        name:
+          type: VARCHAR(100)
+          example: "PHARMACIST"
+        description:
+          type: TEXT
+          example: "Licensed pharmacist role"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    permissions:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "p9x3..."
+        code:
+          type: VARCHAR(100)
+          example: "PRESCRIPTION_REVIEW"
+        description:
+          type: TEXT
+          example: "Can review prescriptions"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    role_permissions:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "rp1..."
+        role_id:
+          type: UUID
+          example: roles.id
+        permission_id:
+          type: UUID
+          example: permissions.id
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    users:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "u123..."
+        role_id:
+          type: UUID
+          example: roles.id
+        full_name:
+          type: VARCHAR(255)
+          example: "Rahul Sharma"
+        mobile_number:
+          type: VARCHAR(15)
+          example: "9876543210"
+        email:
+          type: VARCHAR(255)
+          example: "rahul@gmail.com"
+        password_hash:
+          type: TEXT
+          example: "$2b$10$..."
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    pharmacist_profiles:
+      type: master
+      fields:
+        user_id:
+          type: UUID
+          example: users.id
+        license_number:
+          type: VARCHAR(100)
+          example: "PHARMA-AP-12345"
+        license_valid_till:
+          type: DATE
+          example: "2027-12-31"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    therapeutic_categories:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "tc1..."
+        name:
+          type: VARCHAR(255)
+          example: "Antibiotic"
+        description:
+          type: TEXT
+          example: "Drugs used to treat infections"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    medicines:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "m1..."
+        name:
+          type: VARCHAR(255)
+          example: "Paracetamol"
+        dosage_form:
+          type: VARCHAR(100)
+          example: "Tablet"
+        therapeutic_category_id:
+          type: UUID
+          example: therapeutic_categories.id
+        is_prescription_required:
+          type: BOOLEAN
+          example: false
+        is_controlled:
+          type: BOOLEAN
+          example: false
+        schedule_type:
+          type: VARCHAR(10)
+          example: "OTC"
+        description:
+          type: TEXT
+          example: "Pain reliever"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    medicine_compositions:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "mc1..."
+        medicine_id:
+          type: UUID
+          example: medicines.id
+        salt_name:
+          type: VARCHAR(255)
+          example: "Paracetamol"
+        strength:
+          type: VARCHAR(50)
+          example: "500"
+        unit:
+          type: VARCHAR(20)
+          example: "mg"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    medicine_brands:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "mb1..."
+        medicine_id:
+          type: UUID
+          example: medicines.id
+        brand_name:
+          type: VARCHAR(255)
+          example: "Crocin"
+        manufacturer:
+          type: VARCHAR(255)
+          example: "GSK"
+        mrp:
+          type: NUMERIC(10,2)
+          example: 25.00
+        description:
+          type: TEXT
+          example: "Paracetamol 500mg tablet"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    product_batches:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "pb1..."
+        medicine_brand_id:
+          type: UUID
+          example: medicine_brands.id
+        batch_number:
+          type: VARCHAR(100)
+          example: "BATCH-0925"
+        expiry_date:
+          type: DATE
+          example: "2026-09-30"
+        purchase_price:
+          type: NUMERIC(10,2)
+          example: 18.50
+        quantity_available:
+          type: INTEGER
+          example: 120
+
+    inventory_transactions:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "it1..."
+        medicine_brand_id:
+          type: UUID
+          example: medicine_brands.id
+        product_batch_id:
+          type: UUID
+          example: product_batches.id
+        transaction_type:
+          type: VARCHAR(50)
+          example: "SALE"
+        quantity_change:
+          type: INTEGER
+          example: -10
+        reference_order_id:
+          type: UUID
+          example: orders.id
+        remarks:
+          type: TEXT
+          example: "Sold to customer"
+
+    orders:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "o1..."
+        customer_id:
+          type: UUID
+          example: users.id
+          # Optional - for registered users, null for walk-in customers
+        customer_name:
+          type: VARCHAR(255)
+          example: "Rajesh Kumar"
+          # For walk-in customers or when customer_id is null
+        customer_phone:
+          type: VARCHAR(15)
+          example: "9876543210"
+        delivery_address:
+          type: TEXT
+          example: "123 Main Street, Thoothukudi, Tamil Nadu 628001"
+        order_source:
+          type: VARCHAR(50)
+          example: "ONLINE"
+          # Values: ONLINE, WALK_IN, PRESCRIPTION, PHONE
+        order_status:
+          type: VARCHAR(50)
+          example: "DELIVERED"
+          # Values: PENDING, PROCESSING, CONFIRMED, SHIPPED, DELIVERED, CANCELLED
+        approval_status:
+          type: VARCHAR(50)
+          example: "CONFIRMED"
+          # Values: PENDING, CONFIRMED, REJECTED
+        total_amount:
+          type: NUMERIC(10,2)
+          example: 175.00
+        discount_amount:
+          type: NUMERIC(10,2)
+          example: 5.00
+        delivery_fee:
+          type: NUMERIC(10,2)
+          example: 50.00
+        final_amount:
+          type: NUMERIC(10,2)
+          example: 220.00
+        payment_method:
+          type: VARCHAR(50)
+          example: "CASH"
+          # Values: CASH, ONLINE, UPI, CARD
+        prescription_id:
+          type: VARCHAR(100)
+          example: "RX-20260201-001"
+          # Optional - if prescription required
+        processed_by:
+          type: UUID
+          example: users.id
+          # Admin/Manager who processed the order
+        notes:
+          type: TEXT
+          example: "Customer requested early delivery"
+
+    payments:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "pay1..."
+        order_id:
+          type: UUID
+          example: orders.id
+        payment_method:
+          type: VARCHAR(50)
+          example: "UPI"
+        payment_status:
+          type: VARCHAR(50)
+          example: "SUCCESS"
+        amount:
+          type: NUMERIC(10,2)
+          example: 299.00
+
+    # ============================================
+    # CLINIC & POLYCLINIC MODULE
+    # ============================================
+
+    doctors:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "doc1..."
+        name:
+          type: VARCHAR(255)
+          example: "Dr. M. Sridharan"
+        specialty:
+          type: VARCHAR(255)
+          example: "General Physician"
+        qualifications:
+          type: TEXT
+          example: "MBBS, MD"
+        morning_timings:
+          type: VARCHAR(100)
+          example: "10:00 AM - 1:00 PM"
+        evening_timings:
+          type: VARCHAR(100)
+          example: "5:00 PM - 9:00 PM"
+        image_url:
+          type: TEXT
+          example: "https://example.com/doctor-image.jpg"
+        consultation_fee:
+          type: NUMERIC(10,2)
+          example: 500.00
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    appointments:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "apt1..."
+        doctor_id:
+          type: UUID
+          example: doctors.id
+        patient_name:
+          type: VARCHAR(255)
+          example: "Ramesh Iyer"
+        patient_phone:
+          type: VARCHAR(15)
+          example: "9876543301"
+        appointment_date:
+          type: DATE
+          example: "2026-02-15"
+        appointment_time:
+          type: VARCHAR(50)
+          example: "10:00 AM"
+        status:
+          type: VARCHAR(50)
+          example: "CONFIRMED"
+          # Values: PENDING, CONFIRMED, CANCELLED, COMPLETED, NO_SHOW
+        message:
+          type: TEXT
+          example: "Follow-up consultation for fever"
+        notes:
+          type: TEXT
+          example: "Patient called at 2 PM, confirmed for tomorrow"
+
+    polyclinic_tests:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "pt1..."
+        name:
+          type: VARCHAR(255)
+          example: "Blood Test"
+        description:
+          type: TEXT
+          example: "Complete blood count (CBC), hemoglobin, and comprehensive blood analysis."
+        price:
+          type: NUMERIC(10,2)
+          example: 300.00
+        duration:
+          type: VARCHAR(50)
+          example: "15-20 mins"
+        fasting_required:
+          type: BOOLEAN
+          example: false
+        icon_name:
+          type: VARCHAR(100)
+          example: "TestTube"
+          # For frontend icon mapping (lucide-react icon names)
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    test_bookings:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "tb1..."
+        test_id:
+          type: UUID
+          example: polyclinic_tests.id
+        patient_name:
+          type: VARCHAR(255)
+          example: "Lakshmi Menon"
+        patient_phone:
+          type: VARCHAR(15)
+          example: "9876543302"
+        booking_date:
+          type: DATE
+          example: "2026-02-16"
+        booking_time:
+          type: VARCHAR(50)
+          example: "11:00 AM"
+        status:
+          type: VARCHAR(50)
+          example: "PENDING"
+          # Values: PENDING, CONFIRMED, CANCELLED, COMPLETED, NO_SHOW
+        notes:
+          type: TEXT
+          example: "Patient called at 3 PM, needs fasting test"
+
+    # ============================================
+    # PHARMACY MODULE - ADDITIONAL
+    # ============================================
+
+    product_categories:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "pc1..."
+        name:
+          type: VARCHAR(100)
+          example: "OTC"
+          # Values: OTC, Prescription, Daily Care, Wellness, etc.
+        description:
+          type: TEXT
+          example: "Over-the-counter medicines"
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    coupons:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "cp1..."
+        code:
+          type: VARCHAR(50)
+          example: "SAVE5"
+          # Unique, uppercase
+        discount_percentage:
+          type: NUMERIC(5,2)
+          example: 5.00
+          # Range: 2-6% based on frontend validation
+        expiry_date:
+          type: DATE
+          example: "2026-03-15"
+        min_order_amount:
+          type: NUMERIC(10,2)
+          example: 100.00
+          # Minimum order amount to apply coupon
+        max_discount_amount:
+          type: NUMERIC(10,2)
+          example: 50.00
+          # Maximum discount cap
+        usage_limit:
+          type: INTEGER
+          example: 100
+          # Total number of times coupon can be used (null = unlimited)
+        usage_count:
+          type: INTEGER
+          example: 25
+          # Current usage count
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    coupon_usages:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "cu1..."
+        coupon_id:
+          type: UUID
+          example: coupons.id
+        order_id:
+          type: UUID
+          example: orders.id
+        customer_id:
+          type: UUID
+          example: users.id
+        discount_amount:
+          type: NUMERIC(10,2)
+          example: 15.00
+
+    delivery_settings:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "ds1..."
+          # Singleton pattern - only one record
+        is_enabled:
+          type: BOOLEAN
+          example: true
+        min_order_amount:
+          type: NUMERIC(10,2)
+          example: 200.00
+        delivery_fee:
+          type: NUMERIC(10,2)
+          example: 50.00
+        free_delivery_threshold:
+          type: NUMERIC(10,2)
+          example: 500.00
+        delivery_zones:
+          type: JSONB
+          example: |
+            [
+              {
+                "zone_name": "Thoothukudi City",
+                "delivery_fee": 50.00,
+                "free_delivery_threshold": 500.00
+              },
+              {
+                "zone_name": "Thoothukudi Suburbs",
+                "delivery_fee": 75.00,
+                "free_delivery_threshold": 750.00
+              }
+            ]
+        show_marquee:
+          type: BOOLEAN
+          example: true
+          # For frontend marquee display
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    delivery_slots:
+      type: master
+      fields:
+        id:
+          type: UUID
+          example: "dls1..."
+        delivery_settings_id:
+          type: UUID
+          example: delivery_settings.id
+        slot_time:
+          type: VARCHAR(100)
+          example: "10:00 AM - 12:00 PM"
+        slot_order:
+          type: INTEGER
+          example: 1
+          # For ordering slots
+        is_active:
+          type: BOOLEAN
+          example: true
+
+    # ============================================
+    # ORDERS ENHANCEMENT
+    # ============================================
+
+    order_items:
+      type: transaction
+      fields:
+        id:
+          type: UUID
+          example: "oi1..."
+        order_id:
+          type: UUID
+          example: orders.id
+        medicine_brand_id:
+          type: UUID
+          example: medicine_brands.id
+        quantity:
+          type: INTEGER
+          example: 2
+        unit_price:
+          type: NUMERIC(10,2)
+          example: 45.00
+        total_price:
+          type: NUMERIC(10,2)
+          example: 90.00
+        requires_prescription:
+          type: BOOLEAN
+          example: false

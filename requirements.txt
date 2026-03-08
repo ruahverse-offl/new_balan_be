@@ -1,0 +1,40 @@
+# New Balan Backend — Python dependencies
+# Install: pip install -r requirements.txt (use venv recommended)
+
+# FastAPI and ASGI Server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Pydantic for data validation
+pydantic==2.5.0
+pydantic-settings==2.1.0
+pydantic[email]==2.5.0
+
+# Database
+sqlalchemy[asyncio]==2.0.23
+asyncpg==0.29.0
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# File uploads
+python-multipart==0.0.6
+
+# Storage
+azure-storage-blob==12.19.0
+
+# Environment variables
+python-dotenv==1.0.0
+
+# HTTP Client (for dependencies)
+httpx==0.25.0
+
+# Payments
+razorpay==1.4.1
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+aiosqlite==0.19.0

@@ -108,6 +108,7 @@ class Medicine(MasterModel):
     is_controlled = Column(Boolean, nullable=False, default=False)
     schedule_type = Column(String(10), nullable=False)
     description = Column(Text, nullable=True)
+    is_available = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
 
 class MedicineComposition(MasterModel):
@@ -131,6 +132,7 @@ class MedicineBrand(MasterModel):
     manufacturer = Column(String(255), nullable=False)
     mrp = Column(Numeric(10, 2), nullable=False)
     description = Column(Text, nullable=True)
+    is_available = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
 
 # Transaction Tables

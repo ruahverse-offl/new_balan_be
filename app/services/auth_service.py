@@ -134,10 +134,10 @@ class AuthService:
                 detail="Email already registered"
             )
         
-        # Verify role exists and is active
+        # Signup always assigns CUSTOMER role so users only get customer permissions
         role_stmt = (
             select(Role)
-            .where(Role.id == register_data.role_id)
+            .where(Role.name.ilike("CUSTOMER"))
             .where(Role.is_active == True)
             .where(Role.is_deleted == False)
         )
@@ -145,18 +145,18 @@ class AuthService:
         role = role_result.scalar_one_or_none()
         
         if not role:
-            logger.warning(f"Registration failed: Invalid role_id: {register_data.role_id}")
+            logger.error("Registration failed: CUSTOMER role not found in database")
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Invalid role ID"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Registration is not configured. Please contact support."
             )
         
         # Hash password
         password_hash = hash_password(register_data.password)
         
-        # Create user data
+        # Create user data (always Customer role)
         user_data = {
-            "role_id": register_data.role_id,
+            "role_id": role.id,
             "full_name": register_data.full_name,
             "mobile_number": register_data.mobile_number,
             "email": register_data.email,

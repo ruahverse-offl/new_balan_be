@@ -15,9 +15,9 @@ class LoginRequest(BaseModel):
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=6)
-    role_id: UUID
     full_name: str = Field(..., min_length=1)
     mobile_number: str = Field(..., min_length=10, max_length=15)
+    # role_id is ignored: signup always assigns CUSTOMER role and only customer permissions
 
 
 class UserAuthResponse(BaseModel):

@@ -17,6 +17,7 @@ from app.schemas.medicines_schema import (
     MedicineListResponse
 )
 from app.utils.auth import get_current_user_id_optional
+from app.utils.rbac import require_permission
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/medicines", tags=["medicines"])
@@ -60,12 +61,14 @@ async def get_medicines_list(
     search: Optional[str] = Query(default=None),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
+    is_available: Optional[bool] = Query(default=None, description="Filter by availability (true = only available for customers)"),
     db: AsyncSession = Depends(get_db)
 ):
     """Get list of medicines with pagination, search, and sort."""
     service = MedicinesService(db)
     result = await service.get_medicines_list(
-        limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order
+        limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
+        is_available=is_available
     )
     return result
 
@@ -76,13 +79,12 @@ async def update_medicine(
     data: MedicineUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: Optional[UUID] = Depends(get_current_user_id_optional)
+    current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE"))
 ):
-    """Update a medicine."""
-    user_id = current_user_id or UUID("00000000-0000-0000-0000-000000000000")
+    """Update a medicine (staff). Setting is_available=false marks all its brands unavailable."""
     ip_address = get_client_ip(request)
     service = MedicinesService(db)
-    medicine = await service.update_medicine(medicine_id, data, user_id, ip_address)
+    medicine = await service.update_medicine(medicine_id, data, current_user_id, ip_address)
     if not medicine:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

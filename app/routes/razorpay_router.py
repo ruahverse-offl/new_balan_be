@@ -16,7 +16,7 @@ from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.db_connection import get_db
-from app.db.models import Order, OrderItem, Payment, Coupon, CouponUsage, MedicineBrand, Medicine, User
+from app.db.models import Order, OrderItem, Payment, Coupon, CouponUsage, MedicineBrand, Medicine, User, Prescription
 from app.utils.auth import get_current_user_id
 from app.utils.rbac import require_permission
 from app.utils.request_utils import get_client_ip
@@ -67,6 +67,11 @@ class CartItemSchema(BaseModel):
     requires_prescription: bool = False
 
 
+class AppliedCouponSchema(BaseModel):
+    code: str = Field(..., max_length=50)
+    discount_amount: float = Field(ge=0, description="Discount in rupees for this coupon")
+
+
 class PaymentInitiateRequest(BaseModel):
     customer_name: str = Field(max_length=255)
     customer_phone: str = Field(max_length=15)
@@ -80,6 +85,7 @@ class PaymentInitiateRequest(BaseModel):
     discount_amount: float = Field(ge=0, default=0)
     final_amount: float = Field(gt=0)
     coupon_code: Optional[str] = None
+    applied_coupons: Optional[List[AppliedCouponSchema]] = Field(None, description="Multiple coupons; discount_amount must equal sum of their discount_amount")
     prescription_id: Optional[str] = None
 
 
@@ -117,6 +123,16 @@ class RefundResponse(BaseModel):
     refund_transaction_id: str
 
 
+class MockInitiateResponse(BaseModel):
+    order_id: str
+    order_reference: Optional[str] = None
+    amount: float  # in rupees (for display)
+
+
+class MockCompleteRequest(BaseModel):
+    order_id: str = Field(..., description="Order UUID from mock-initiate")
+
+
 # ─── Endpoints ───
 
 
@@ -131,6 +147,11 @@ async def initiate_razorpay_payment(
     Create order + order items + payment record, then create Razorpay order.
     Returns order_id, razorpay_order_id, key_id and amount for frontend checkout.
     """
+    if not (settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payment gateway (Razorpay) is not configured. Use mock-initiate for local testing or set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
+        )
     ip_address = get_client_ip(request)
 
     expected_final = round(data.subtotal + data.delivery_fee - data.discount_amount, 2)
@@ -175,7 +196,7 @@ async def initiate_razorpay_payment(
             final_amount=Decimal(str(data.final_amount)),
             payment_method="RAZORPAY",
             prescription_id=data.prescription_id,
-            notes=f"Coupon: {data.coupon_code}" if data.coupon_code else None,
+            notes="Coupons: " + ", ".join(ac.code for ac in data.applied_coupons) if data.applied_coupons else (f"Coupon: {data.coupon_code}" if data.coupon_code else None),
             created_by=current_user_id,
             created_ip=ip_address,
         )
@@ -226,7 +247,46 @@ async def initiate_razorpay_payment(
 
         await db.flush()
 
-        if data.coupon_code and (data.coupon_code or "").strip() and data.discount_amount > 0:
+        # Link prescription to this order when order includes prescription-required items
+        if data.prescription_id and (data.prescription_id or "").strip():
+            try:
+                prescription_uuid = UUID(str(data.prescription_id).strip())
+                await db.execute(
+                    sa_update(Prescription).where(Prescription.id == prescription_uuid).values(order_id=order.id)
+                )
+                await db.flush()
+            except (ValueError, TypeError):
+                pass  # Invalid prescription_id format; order still succeeds
+
+        if data.applied_coupons:
+            for ac in data.applied_coupons:
+                if not ac.code or ac.discount_amount <= 0:
+                    continue
+                code_upper = (ac.code or "").strip().upper()
+                coupon_stmt = select(Coupon).where(
+                    Coupon.code == code_upper,
+                    Coupon.is_deleted == False,
+                    Coupon.is_active == True,
+                )
+                coupon_result = await db.execute(coupon_stmt)
+                coupon = coupon_result.scalar_one_or_none()
+                if coupon:
+                    usage = CouponUsage(
+                        coupon_id=coupon.id,
+                        order_id=order.id,
+                        customer_id=current_user_id,
+                        discount_amount=Decimal(str(ac.discount_amount)),
+                        coupon_code=code_upper,
+                        customer_name=(data.customer_name or "").strip() or None,
+                        customer_phone=(data.customer_phone or "").strip() or None,
+                        order_final_amount=Decimal(str(data.final_amount)),
+                        created_by=current_user_id,
+                        created_ip=ip_address,
+                    )
+                    db.add(usage)
+                    coupon.usage_count = (coupon.usage_count or 0) + 1
+            await db.flush()
+        elif data.coupon_code and (data.coupon_code or "").strip() and data.discount_amount > 0:
             code_upper = (data.coupon_code or "").strip().upper()
             coupon_stmt = select(Coupon).where(
                 Coupon.code == code_upper,
@@ -313,6 +373,266 @@ async def initiate_razorpay_payment(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to initiate payment. Please try again.",
         )
+
+
+@router.post("/mock-initiate", response_model=MockInitiateResponse)
+async def mock_initiate_payment(
+    data: PaymentInitiateRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+):
+    """
+    Create order + order items + payment record without Razorpay (for mock/demo).
+    Frontend then shows mock payment screen; on "Proceed" call mock-complete.
+    """
+    ip_address = get_client_ip(request)
+    expected_final = round(data.subtotal + data.delivery_fee - data.discount_amount, 2)
+    if abs(expected_final - data.final_amount) > 0.01:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Amount mismatch: expected {expected_final}, got final_amount={data.final_amount}",
+        )
+    if data.applied_coupons:
+        applied_sum = sum(ac.discount_amount for ac in data.applied_coupons)
+        if abs(applied_sum - data.discount_amount) > 0.01:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Discount mismatch: applied_coupons sum {applied_sum} != discount_amount {data.discount_amount}",
+            )
+    phone_digits = "".join(c for c in data.customer_phone if c.isdigit())
+    if len(phone_digits) < 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid phone number. Must be at least 10 digits.",
+        )
+    try:
+        user_row = await db.execute(
+            select(User.full_name).where(User.id == current_user_id, User.is_deleted == False)
+        )
+        user_full_name = (user_row.scalar_one_or_none() or "") or data.customer_name or "user"
+        username_slug = _slug_username(user_full_name)
+        order_reference = _make_order_reference(username_slug)
+
+        order = Order(
+            order_reference=order_reference,
+            customer_id=current_user_id,
+            customer_name=data.customer_name,
+            customer_phone=data.customer_phone,
+            customer_email=(data.customer_email or "").strip() or None,
+            delivery_address=data.delivery_address,
+            pincode=(data.pincode or "").strip() or None,
+            city=(data.city or "").strip() or None,
+            order_source="ONLINE",
+            order_status="PENDING",
+            approval_status="PENDING",
+            total_amount=Decimal(str(data.subtotal)),
+            discount_amount=Decimal(str(data.discount_amount)),
+            delivery_fee=Decimal(str(data.delivery_fee)),
+            final_amount=Decimal(str(data.final_amount)),
+            payment_method="RAZORPAY",
+            prescription_id=data.prescription_id,
+            notes="Coupons: " + ", ".join(ac.code for ac in data.applied_coupons) if data.applied_coupons else (f"Coupon: {data.coupon_code}" if data.coupon_code else None),
+            created_by=current_user_id,
+            created_ip=ip_address,
+        )
+        db.add(order)
+        await db.flush()
+
+        for item in data.items:
+            brand_id = item.medicine_brand_id
+            if brand_id and "_" in brand_id:
+                brand_id = brand_id.split("_")[-1]
+            if not brand_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Missing medicine_brand_id for item: {item.name}",
+                )
+            try:
+                brand_uuid = UUID(brand_id)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid medicine_brand_id for item: {item.name}",
+                )
+            brand_stmt = select(MedicineBrand, Medicine).join(
+                Medicine, MedicineBrand.medicine_id == Medicine.id
+            ).where(
+                MedicineBrand.id == brand_uuid,
+                MedicineBrand.is_deleted == False,
+            )
+            brand_row = await db.execute(brand_stmt)
+            brand_med = brand_row.first()
+            medicine_name_val = brand_med[1].name if brand_med else None
+            brand_name_val = brand_med[0].brand_name if brand_med else item.name
+            order_item = OrderItem(
+                order_id=order.id,
+                medicine_brand_id=brand_uuid,
+                medicine_name=medicine_name_val,
+                brand_name=brand_name_val,
+                quantity=item.quantity,
+                unit_price=Decimal(str(item.price)),
+                total_price=Decimal(str(round(item.price * item.quantity, 2))),
+                requires_prescription=item.requires_prescription,
+                created_by=current_user_id,
+                created_ip=ip_address,
+            )
+            db.add(order_item)
+        await db.flush()
+
+        if data.applied_coupons:
+            for ac in data.applied_coupons:
+                if not ac.code or ac.discount_amount <= 0:
+                    continue
+                code_upper = (ac.code or "").strip().upper()
+                coupon_stmt = select(Coupon).where(
+                    Coupon.code == code_upper,
+                    Coupon.is_deleted == False,
+                    Coupon.is_active == True,
+                )
+                coupon_result = await db.execute(coupon_stmt)
+                coupon = coupon_result.scalar_one_or_none()
+                if coupon:
+                    usage = CouponUsage(
+                        coupon_id=coupon.id,
+                        order_id=order.id,
+                        customer_id=current_user_id,
+                        discount_amount=Decimal(str(ac.discount_amount)),
+                        coupon_code=code_upper,
+                        customer_name=(data.customer_name or "").strip() or None,
+                        customer_phone=(data.customer_phone or "").strip() or None,
+                        order_final_amount=Decimal(str(data.final_amount)),
+                        created_by=current_user_id,
+                        created_ip=ip_address,
+                    )
+                    db.add(usage)
+                    coupon.usage_count = (coupon.usage_count or 0) + 1
+            await db.flush()
+        elif data.coupon_code and (data.coupon_code or "").strip() and data.discount_amount > 0:
+            code_upper = (data.coupon_code or "").strip().upper()
+            coupon_stmt = select(Coupon).where(
+                Coupon.code == code_upper,
+                Coupon.is_deleted == False,
+                Coupon.is_active == True,
+            )
+            coupon_result = await db.execute(coupon_stmt)
+            coupon = coupon_result.scalar_one_or_none()
+            if coupon:
+                usage = CouponUsage(
+                    coupon_id=coupon.id,
+                    order_id=order.id,
+                    customer_id=current_user_id,
+                    discount_amount=Decimal(str(data.discount_amount)),
+                    coupon_code=code_upper,
+                    customer_name=(data.customer_name or "").strip() or None,
+                    customer_phone=(data.customer_phone or "").strip() or None,
+                    order_final_amount=Decimal(str(data.final_amount)),
+                    created_by=current_user_id,
+                    created_ip=ip_address,
+                )
+                db.add(usage)
+                coupon.usage_count = (coupon.usage_count or 0) + 1
+                await db.flush()
+
+        gateway_order_id_mock = "mock_" + str(order.id)
+        payment = Payment(
+            order_id=order.id,
+            payment_method="RAZORPAY",
+            payment_status="INITIATED",
+            amount=Decimal(str(data.final_amount)),
+            merchant_transaction_id=str(order.id),
+            gateway_order_id=gateway_order_id_mock,
+            gateway_response=json.dumps({"mock": True, "order_id": str(order.id)}, default=str),
+            created_by=current_user_id,
+            created_ip=ip_address,
+        )
+        db.add(payment)
+        await db.commit()
+        logger.info("Mock payment initiated — order=%s, amount=₹%s", order.id, data.final_amount)
+        return MockInitiateResponse(
+            order_id=str(order.id),
+            order_reference=order.order_reference,
+            amount=float(data.final_amount),
+        )
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("Error mock initiating payment: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create order. Please try again.",
+        )
+
+
+@router.post("/mock-complete", response_model=PaymentStatusResponse)
+async def mock_complete_payment(
+    data: MockCompleteRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+):
+    """
+    Mark a mock-initiated order as paid (no real Razorpay). Call after user clicks Proceed on mock screen.
+    """
+    try:
+        order_uuid = UUID(data.order_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order ID format.")
+    result = await db.execute(
+        select(Payment, Order).join(Order, Payment.order_id == Order.id).where(Payment.order_id == order_uuid)
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order or payment not found.")
+    payment, order = row
+    if order.customer_id and order.customer_id != current_user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not own this order.")
+    if not (payment.gateway_order_id or payment.gateway_order_id.startswith("mock_")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This order is not a mock payment.")
+    if payment.payment_status == "SUCCESS":
+        return PaymentStatusResponse(
+            order_id=str(order.id),
+            payment_status="SUCCESS",
+            amount=float(payment.amount),
+            transaction_id=payment.gateway_transaction_id,
+            order_status=order.order_status,
+        )
+    ip_address = get_client_ip(request)
+    now_ist = datetime.now(IST)
+    mock_txn_id = "mock_" + uuid4().hex[:12]
+    await db.execute(
+        sa_update(Payment)
+        .where(Payment.id == payment.id)
+        .values(
+            payment_status="SUCCESS",
+            gateway_transaction_id=mock_txn_id,
+            gateway_response=json.dumps({"mock": True, "completed_at": now_ist.isoformat()}, default=str),
+            payment_date=now_ist,
+            updated_by=current_user_id,
+            updated_ip=ip_address,
+        )
+    )
+    await db.execute(
+        sa_update(Order)
+        .where(Order.id == order.id)
+        .values(
+            order_status="CONFIRMED",
+            payment_completed_at=now_ist,
+            updated_by=current_user_id,
+            updated_ip=ip_address,
+        )
+    )
+    await db.commit()
+    logger.info("Mock payment completed — order=%s", order.id)
+    return PaymentStatusResponse(
+        order_id=str(order.id),
+        payment_status="SUCCESS",
+        amount=float(payment.amount),
+        transaction_id=mock_txn_id,
+        order_status="CONFIRMED",
+    )
 
 
 @router.post("/verify", response_model=PaymentStatusResponse)

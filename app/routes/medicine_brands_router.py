@@ -44,12 +44,14 @@ async def get_medicine_brands_list(
     search: Optional[str] = Query(default=None),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
+    is_available: Optional[bool] = Query(default=None, description="Filter by availability (true = only available for customers)"),
     db: AsyncSession = Depends(get_db)
 ):
     """Get list of medicine brands with pagination, search, and sort."""
     service = MedicineBrandsService(db)
     result = await service.get_medicine_brands_list(
-        limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order
+        limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
+        is_available=is_available
     )
     return result
 

@@ -4,10 +4,13 @@ FastAPI Application Entry Point
 # (touch to trigger uvicorn --reload)
 import logging
 import traceback
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.routes import api_router
+from app.config import get_settings
 from app.db.db_connection import DatabaseConnection
 from app.config import get_settings
 
@@ -99,3 +102,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Include all API routes
 app.include_router(api_router)
+
+# Serve stored files at /storage (e.g. /storage/medicine/xxx.jpg). Use LOCAL_STORAGE_PATH.
+_storage_path = Path(get_settings().LOCAL_STORAGE_PATH)
+if _storage_path.exists():
+    app.mount("/storage", StaticFiles(directory=str(_storage_path)), name="storage")

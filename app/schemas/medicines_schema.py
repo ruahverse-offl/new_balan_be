@@ -20,7 +20,7 @@ class MedicineCreateRequest(BaseCreateRequest):
     is_controlled: bool = Field(False, description="Whether the medicine is controlled")
     schedule_type: str = Field(..., max_length=10, description="Schedule type (e.g., OTC)")
     description: Optional[str] = Field(None, description="Medicine description")
-    # is_active is automatically set to True by the backend
+    is_available: Optional[bool] = Field(True, description="Available for sale (default True)")
     
     model_config = {"json_schema_extra": {"example": {
         "name": "Paracetamol",
@@ -44,6 +44,7 @@ class MedicineUpdateRequest(BaseUpdateRequest):
     schedule_type: Optional[str] = Field(None, max_length=10, description="Schedule type")
     description: Optional[str] = Field(None, description="Medicine description")
     is_active: Optional[bool] = Field(None, description="Whether the medicine is active")
+    is_available: Optional[bool] = Field(None, description="Available for sale; if False, all brands become unavailable")
     
     model_config = {"json_schema_extra": {"example": {
         "name": "Paracetamol 500mg",
@@ -66,6 +67,7 @@ class MedicineResponse(BaseResponse):
     schedule_type: str = Field(..., description="Schedule type")
     description: Optional[str] = Field(None, description="Medicine description")
     is_active: bool = Field(..., description="Whether the medicine is active")
+    is_available: bool = Field(True, description="Available for sale; when False, all its brands are unavailable")
     
     model_config = {"json_schema_extra": {"example": {
         "id": "m1e123-4567-8901-2345-678901234567",
@@ -77,6 +79,7 @@ class MedicineResponse(BaseResponse):
         "schedule_type": "OTC",
         "description": "Pain reliever",
         "is_active": True,
+        "is_available": True,
         "created_by": "u123e456-7890-1234-5678-901234567890",
         "created_at": "2026-02-01T10:30:00Z",
         "created_ip": "192.168.1.100",

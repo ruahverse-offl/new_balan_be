@@ -8,9 +8,10 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.repositories.medicines_repository import MedicinesRepository
+from app.db.models import MedicineBrand
 from app.schemas.medicines_schema import (
     MedicineCreateRequest,
     MedicineUpdateRequest,
@@ -52,6 +53,7 @@ class MedicinesService(BaseService):
         medicine_data = data.model_dump()
         # Automatically set is_active to True
         medicine_data["is_active"] = True
+        medicine_data.setdefault("is_available", True)
         # Ensure therapeutic_category_id is included (required for medicines)
         if data.therapeutic_category_id:
             medicine_data["therapeutic_category_id"] = data.therapeutic_category_id
@@ -75,11 +77,14 @@ class MedicinesService(BaseService):
         offset: int = 0,
         search: Optional[str] = None,
         sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None
+        sort_order: Optional[str] = None,
+        is_available: Optional[bool] = None
     ) -> MedicineListResponse:
-        """Get list of medicines with pagination, search, and sort."""
+        """Get list of medicines with pagination, search, and sort. Filter by is_available for customer-facing lists."""
+        additional = {"is_available": is_available} if is_available is not None else None
         medicines, pagination = await self.repository.get_list(
-            limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order
+            limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
+            additional_filters=additional
         )
         category_ids = [m.therapeutic_category_id for m in medicines if m.therapeutic_category_id]
         name_by_category_id = {}
@@ -107,12 +112,20 @@ class MedicinesService(BaseService):
         updated_by: UUID,
         updated_ip: str
     ) -> Optional[MedicineResponse]:
-        """Update a medicine."""
+        """Update a medicine. When is_available is set to False, all its brands are set unavailable."""
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
         logger.info(f"Updating medicine: {medicine_id} therapeutic_category_id={update_data.get('therapeutic_category_id')}")
         medicine = await self.repository.update(medicine_id, update_data, updated_by, updated_ip)
         if not medicine:
             return None
+        if update_data.get("is_available") is False:
+            await self.session.execute(
+                update(MedicineBrand)
+                .where(MedicineBrand.medicine_id == medicine_id)
+                .where(MedicineBrand.is_deleted == False)
+                .values(is_available=False, updated_by=updated_by, updated_ip=updated_ip)
+            )
+            logger.info(f"Cascaded is_available=False to all brands of medicine {medicine_id}")
         medicine_dict = self._model_to_dict(medicine)
         medicine_dict["therapeutic_category_name"] = await _get_therapeutic_category_name(self.session, medicine.therapeutic_category_id)
         return MedicineResponse(**medicine_dict)

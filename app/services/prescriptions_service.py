@@ -34,10 +34,13 @@ class PrescriptionsService(BaseService):
         created_by: UUID,
         created_ip: str
     ) -> PrescriptionResponse:
-        """Create a new prescription."""
+        """Create a new prescription (optionally with a specific id for upload flow)."""
         logger.info(f"Creating prescription for customer: {data.customer_id}")
         prescription_data = data.model_dump()
         prescription_data["status"] = "PENDING"
+        # Remove id if None so DB can generate; if provided (e.g. from upload), keep it
+        if prescription_data.get("id") is None:
+            prescription_data.pop("id", None)
         prescription = await self.repository.create(prescription_data, created_by, created_ip)
         prescription_dict = self._model_to_dict(prescription)
         return PrescriptionResponse(**prescription_dict)

@@ -19,7 +19,7 @@ class MedicineBrandCreateRequest(BaseCreateRequest):
     manufacturer: str = Field(..., max_length=255, description="Manufacturer name")
     mrp: Decimal = Field(..., description="Maximum Retail Price (2 decimal places)")
     description: Optional[str] = Field(None, description="Brand description")
-    # is_active is automatically set to True by the backend
+    is_available: Optional[bool] = Field(True, description="Available for sale (default True)")
     
     model_config = {"json_schema_extra": {"example": {
         "medicine_id": "m1e123-4567-8901-2345-678901234567",
@@ -39,6 +39,7 @@ class MedicineBrandUpdateRequest(BaseUpdateRequest):
     mrp: Optional[Decimal] = Field(None, description="Maximum Retail Price (2 decimal places)")
     description: Optional[str] = Field(None, description="Brand description")
     is_active: Optional[bool] = Field(None, description="Whether the brand is active")
+    is_available: Optional[bool] = Field(None, description="Available for sale; if True, parent medicine becomes available")
     
     model_config = {"json_schema_extra": {"example": {
         "brand_name": "Crocin Advance",
@@ -58,6 +59,7 @@ class MedicineBrandResponse(BaseResponse):
     mrp: Decimal = Field(..., description="Maximum Retail Price")
     description: Optional[str] = Field(None, description="Brand description")
     is_active: bool = Field(..., description="Whether the brand is active")
+    is_available: bool = Field(True, description="Available for sale")
     
     model_config = {"json_schema_extra": {"example": {
         "id": "mb1e123-4567-8901-2345-678901234567",
@@ -67,6 +69,7 @@ class MedicineBrandResponse(BaseResponse):
         "mrp": 25.00,
         "description": "Paracetamol 500mg tablet",
         "is_active": True,
+        "is_available": True,
         "created_by": "u123e456-7890-1234-5678-901234567890",
         "created_at": "2026-02-01T10:30:00Z",
         "created_ip": "192.168.1.100",

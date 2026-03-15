@@ -10,6 +10,7 @@ from sqlalchemy import select
 import logging
 
 from app.repositories.medicine_brands_repository import MedicineBrandsRepository
+from app.repositories.medicines_repository import MedicinesRepository
 from app.schemas.medicine_brands_schema import (
     MedicineBrandCreateRequest,
     MedicineBrandUpdateRequest,
@@ -41,6 +42,7 @@ class MedicineBrandsService(BaseService):
         brand_data = data.model_dump()
         # Automatically set is_active to True
         brand_data["is_active"] = True
+        brand_data.setdefault("is_available", True)
         brand = await self.repository.create(brand_data, created_by, created_ip)
         brand_dict = self._model_to_dict(brand)
         return MedicineBrandResponse(**brand_dict)
@@ -59,11 +61,14 @@ class MedicineBrandsService(BaseService):
         offset: int = 0,
         search: Optional[str] = None,
         sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None
+        sort_order: Optional[str] = None,
+        is_available: Optional[bool] = None
     ) -> MedicineBrandListResponse:
-        """Get list of medicine brands with pagination, search, and sort. Includes medicine_name for display."""
+        """Get list of medicine brands with pagination, search, and sort. Filter by is_available for customer-facing lists."""
+        additional = {"is_available": is_available} if is_available is not None else None
         brands, pagination = await self.repository.get_list(
-            limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order
+            limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
+            additional_filters=additional
         )
         medicine_ids = [b.medicine_id for b in brands if b.medicine_id]
         name_by_id = {}
@@ -89,12 +94,16 @@ class MedicineBrandsService(BaseService):
         updated_by: UUID,
         updated_ip: str
     ) -> Optional[MedicineBrandResponse]:
-        """Update a medicine brand."""
+        """Update a medicine brand. When is_available is set to True, parent medicine becomes available."""
         logger.info(f"Updating medicine brand: {brand_id}")
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
         brand = await self.repository.update(brand_id, update_data, updated_by, updated_ip)
         if not brand:
             return None
+        if update_data.get("is_available") is True and brand.medicine_id:
+            medicines_repo = MedicinesRepository(self.session)
+            await medicines_repo.update(brand.medicine_id, {"is_available": True}, updated_by, updated_ip)
+            logger.info(f"Set parent medicine {brand.medicine_id} is_available=True (brand {brand_id} is available)")
         brand_dict = self._model_to_dict(brand)
         return MedicineBrandResponse(**brand_dict)
     

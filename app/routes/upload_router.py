@@ -1,0 +1,72 @@
+"""
+Generic file upload and list API.
+Saves files to LOCAL_STORAGE_PATH (e.g. /app/storage in Docker) under category subdirs.
+Use for medicine images, prescriptions, and other uploads.
+"""
+
+from pathlib import Path
+from fastapi import APIRouter, File, Form, HTTPException, status, UploadFile
+
+from app.config import get_settings
+from app.utils.storage import StorageService
+
+router = APIRouter(prefix="/api/v1", tags=["upload"])
+
+ALLOWED_CONTENT_PREFIXES = ("image/", "application/pdf", "text/")
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    category: str = Form(..., pattern="^(medicine|prescription|others)$"),
+):
+    """
+    Upload a file to a category folder (medicine, prescription, others).
+    Returns filename, stored_as (relative path), and url for frontend.
+    """
+    if not (file.content_type and file.content_type.startswith(ALLOWED_CONTENT_PREFIXES)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file type. Allowed: image/*, application/pdf, text/*",
+        )
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size exceeds maximum ({MAX_FILE_SIZE // (1024*1024)}MB)",
+        )
+    await file.seek(0)
+
+    storage_service = StorageService()
+    try:
+        info = await storage_service.save_file(file, subdirectory=category)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Save failed: {str(e)}",
+        )
+
+    stored_relative = info["file_url"].replace("/storage/", "", 1) if info["file_url"].startswith("/storage/") else f"{category}/{Path(info['file_url']).name}"
+
+    return {
+        "filename": info["file_name"],
+        "stored_as": stored_relative,
+        "url": info["file_url"],
+        "file_size": info["file_size"],
+        "file_type": info["file_type"],
+    }
+
+
+@router.get("/files/{category}/")
+async def list_files(category: str):
+    """List stored filenames in a category (medicine, prescription, others)."""
+    if category not in ("medicine", "prescription", "others"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid category")
+    settings = get_settings()
+    dir_path = Path(settings.LOCAL_STORAGE_PATH) / category
+    if not dir_path.is_dir():
+        return {"files": []}
+    files = [f.name for f in dir_path.iterdir() if f.is_file()]
+    return {"files": files}

@@ -45,6 +45,7 @@ from app.routes.prescriptions_router import router as prescriptions_router
 from app.routes.insurance_enquiries_router import router as insurance_enquiries_router
 from app.routes.razorpay_router import router as razorpay_router
 from app.routes.addresses_router import router as addresses_router
+from app.routes.upload_router import router as upload_router
 
 # Create main API router
 api_router = APIRouter()
@@ -89,6 +90,7 @@ api_router.include_router(prescriptions_router)
 api_router.include_router(insurance_enquiries_router)
 api_router.include_router(razorpay_router)
 api_router.include_router(addresses_router)
+api_router.include_router(upload_router)
 
 __all__ = [
     "api_router",
@@ -119,4 +121,5 @@ __all__ = [
     "insurance_enquiries_router",
     "razorpay_router",
     "addresses_router",
+    "upload_router",
 ]

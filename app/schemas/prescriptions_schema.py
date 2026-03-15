@@ -13,6 +13,7 @@ from app.schemas.common import ListResponse, BaseCreateRequest, BaseUpdateReques
 class PrescriptionCreateRequest(BaseCreateRequest):
     """Request model for creating a prescription."""
 
+    id: Optional[UUID] = Field(None, description="Prescription ID (optional; for upload flow to use same ID as file reference)")
     customer_id: UUID = Field(..., description="Customer ID")
     order_id: Optional[UUID] = Field(None, description="Order ID (if linked to order)")
     file_url: str = Field(..., description="File storage URL")
@@ -24,6 +25,7 @@ class PrescriptionCreateRequest(BaseCreateRequest):
 class PrescriptionUpdateRequest(BaseUpdateRequest):
     """Request model for updating a prescription."""
 
+    order_id: Optional[UUID] = Field(None, description="Link to order (set when order is created)")
     status: Optional[str] = Field(None, max_length=50, description="Status (PENDING, APPROVED, REJECTED)")
     review_notes: Optional[str] = Field(None, description="Review notes")
     rejection_reason: Optional[str] = Field(None, description="Rejection reason")

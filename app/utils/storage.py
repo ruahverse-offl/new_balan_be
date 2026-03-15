@@ -1,6 +1,10 @@
 """
 Storage Service
-Handles file uploads for local and Azure Blob storage backends
+Handles file uploads for local and Azure Blob storage backends.
+
+For now prescriptions (and other uploads) are stored on LOCAL STORAGE (disk) only;
+the DB stores only metadata (file_url, file_name, etc.). A storage bucket (e.g. S3/Azure)
+can be enabled later via STORAGE_BACKEND=azure.
 """
 
 import os
@@ -28,7 +32,7 @@ class StorageService:
         return await self._save_locally(file, subdirectory)
 
     async def _save_locally(self, file: UploadFile, subdirectory: str) -> dict:
-        """Save file to local filesystem."""
+        """Save file to local filesystem (e.g. ./storage/prescriptions/). No DB blob; no cloud."""
         storage_path = Path(self.settings.LOCAL_STORAGE_PATH)
         if subdirectory:
             storage_path = storage_path / subdirectory

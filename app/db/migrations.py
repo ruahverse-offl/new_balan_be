@@ -21,6 +21,9 @@ async def run_migrations(engine):
         await _ensure_orders_extra_columns(conn)
         await _ensure_orders_order_reference(conn)
         await _ensure_order_items_snapshot_columns(conn)
+        await _ensure_prescriptions_review_notes(conn)
+        await _ensure_medicines_is_available(conn)
+        await _ensure_medicine_brands_is_available(conn)
         await _ensure_therapeutic_categories_seed(conn)
 
 
@@ -79,6 +82,32 @@ async def _ensure_coupon_usages_snapshot_columns(conn):
         type_sql = "VARCHAR(50)" if col == "coupon_code" else "VARCHAR(255)" if col == "customer_name" else "VARCHAR(15)" if col == "customer_phone" else "NUMERIC(10, 2)"
         await conn.execute(text(f"ALTER TABLE coupon_usages ADD COLUMN {col} {type_sql}"))
         logger.info("coupon_usages.%s column added", col)
+
+
+async def _ensure_prescriptions_review_notes(conn):
+    """Add review_notes to prescriptions (for pharmacist approval notes)."""
+    table_result = await conn.execute(
+        text("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'prescriptions'
+        """)
+    )
+    if table_result.scalar() is None:
+        return
+    col_result = await conn.execute(
+        text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'prescriptions' AND column_name = 'review_notes'
+        """)
+    )
+    if col_result.scalar() is not None:
+        logger.info("prescriptions.review_notes column already exists")
+        return
+    logger.info("Adding review_notes column to prescriptions table...")
+    await conn.execute(
+        text("ALTER TABLE prescriptions ADD COLUMN review_notes TEXT")
+    )
+    logger.info("prescriptions.review_notes column added successfully")
 
 
 async def _ensure_coupons_first_order_only(conn):
@@ -190,6 +219,58 @@ async def _ensure_order_items_snapshot_columns(conn):
             continue
         await conn.execute(text(f"ALTER TABLE order_items ADD COLUMN {col_name} {col_type}"))
         logger.info("order_items.%s column added", col_name)
+
+
+async def _ensure_medicines_is_available(conn):
+    """Add is_available to medicines (for staff to mark unavailable; cascades to all brands)."""
+    table_result = await conn.execute(
+        text("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'medicines'
+        """)
+    )
+    if table_result.scalar() is None:
+        return
+    col_result = await conn.execute(
+        text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'medicines' AND column_name = 'is_available'
+        """)
+    )
+    if col_result.scalar() is not None:
+        logger.info("medicines.is_available column already exists")
+        return
+    logger.info("Adding is_available column to medicines table...")
+    await conn.execute(
+        text("ALTER TABLE medicines ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT true")
+    )
+    logger.info("medicines.is_available column added successfully")
+
+
+async def _ensure_medicine_brands_is_available(conn):
+    """Add is_available to medicine_brands (per-brand availability; if any brand available, medicine shows available)."""
+    table_result = await conn.execute(
+        text("""
+            SELECT 1 FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = 'medicine_brands'
+        """)
+    )
+    if table_result.scalar() is None:
+        return
+    col_result = await conn.execute(
+        text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = 'medicine_brands' AND column_name = 'is_available'
+        """)
+    )
+    if col_result.scalar() is not None:
+        logger.info("medicine_brands.is_available column already exists")
+        return
+    logger.info("Adding is_available column to medicine_brands table...")
+    await conn.execute(
+        text("ALTER TABLE medicine_brands ADD COLUMN is_available BOOLEAN NOT NULL DEFAULT true")
+    )
+    logger.info("medicine_brands.is_available column added successfully")
 
 
 async def _ensure_therapeutic_categories_seed(conn):

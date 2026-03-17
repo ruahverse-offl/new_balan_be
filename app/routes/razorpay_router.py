@@ -27,6 +27,8 @@ from app.services.razorpay_service import (
     fetch_payment,
     process_refund,
 )
+from app.db.models import DeliverySetting, DeliverySlot
+from app.utils.delivery_windows import is_now_within_any_slot
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,36 @@ async def initiate_razorpay_payment(
             detail="Payment gateway (Razorpay) is not configured. Use mock-initiate for local testing or set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
         )
     ip_address = get_client_ip(request)
+
+    # Enforce delivery windows server-side (IST-based slots)
+    ds_row = await db.execute(
+        select(DeliverySetting)
+        .where(DeliverySetting.is_deleted == False)
+        .where(DeliverySetting.is_active == True)
+        .order_by(DeliverySetting.created_at.desc())
+    )
+    ds = ds_row.scalars().first()
+    if ds and ds.is_enabled is False:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Delivery is currently turned off.")
+    if ds:
+        slots_row = await db.execute(
+            select(DeliverySlot.slot_time)
+            .where(DeliverySlot.delivery_settings_id == ds.id)
+            .where(DeliverySlot.is_deleted == False)
+            .where(DeliverySlot.is_active == True)
+            .order_by(DeliverySlot.slot_order.asc())
+        )
+        slot_times = [r[0] for r in slots_row.all() if r and r[0]]
+        if not slot_times:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Orders cannot be placed because no active delivery time windows are configured.",
+            )
+        if not is_now_within_any_slot(slot_times):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Orders can only be placed during active delivery time windows (IST): " + ", ".join(slot_times),
+            )
 
     expected_final = round(data.subtotal + data.delivery_fee - data.discount_amount, 2)
     if abs(expected_final - data.final_amount) > 0.01:
@@ -387,6 +419,37 @@ async def mock_initiate_payment(
     Frontend then shows mock payment screen; on "Proceed" call mock-complete.
     """
     ip_address = get_client_ip(request)
+
+    # Enforce delivery windows server-side (IST-based slots)
+    ds_row = await db.execute(
+        select(DeliverySetting)
+        .where(DeliverySetting.is_deleted == False)
+        .where(DeliverySetting.is_active == True)
+        .order_by(DeliverySetting.created_at.desc())
+    )
+    ds = ds_row.scalars().first()
+    if ds and ds.is_enabled is False:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Delivery is currently turned off.")
+    if ds:
+        slots_row = await db.execute(
+            select(DeliverySlot.slot_time)
+            .where(DeliverySlot.delivery_settings_id == ds.id)
+            .where(DeliverySlot.is_deleted == False)
+            .where(DeliverySlot.is_active == True)
+            .order_by(DeliverySlot.slot_order.asc())
+        )
+        slot_times = [r[0] for r in slots_row.all() if r and r[0]]
+        if not slot_times:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Orders cannot be placed because no active delivery time windows are configured.",
+            )
+        if not is_now_within_any_slot(slot_times):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Orders can only be placed during active delivery time windows (IST): " + ", ".join(slot_times),
+            )
+
     expected_final = round(data.subtotal + data.delivery_fee - data.discount_amount, 2)
     if abs(expected_final - data.final_amount) > 0.01:
         raise HTTPException(

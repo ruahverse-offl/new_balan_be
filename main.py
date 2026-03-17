@@ -5,6 +5,7 @@ FastAPI Application Entry Point
 import logging
 import traceback
 from pathlib import Path
+from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,16 +22,29 @@ settings = get_settings()
 app = FastAPI(
     title="Medical Shop Pharmacy API",
     description="Backend API for Medical Shop Pharmacy Management System",
-    version="1.0.0"
+    version="1.0.0",
 )
 
-# CORS — allow any origin/port/URL (no CORS errors from frontend)
+# Request correlation ID middleware (X-Request-ID)
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+# CORS (configurable via env; lock down in production)
+_cors_origins = settings.cors_origins_list
+_allow_all_origins = len(_cors_origins) == 1 and _cors_origins[0] == "*"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    # If allow_origins is ["*"], credentials MUST be false (per spec; browsers will reject otherwise)
+    allow_credentials=(False if _allow_all_origins else bool(settings.CORS_ALLOW_CREDENTIALS)),
+    allow_methods=settings.cors_methods_list,
+    allow_headers=settings.cors_headers_list,
     expose_headers=["*"],
 )
 
@@ -88,14 +102,16 @@ async def health_check():
 # Global exception handler so 500 errors return JSON with CORS headers
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled error: {exc}\n{traceback.format_exc()}")
+    req_id = getattr(getattr(request, "state", None), "request_id", None)
+    logger.error(f"Unhandled error (request_id={req_id}): {exc}\n{traceback.format_exc()}")
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal server error: {str(exc)}"},
+        content={"detail": f"Internal server error: {str(exc)}", "request_id": req_id},
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "*",
             "Access-Control-Allow-Headers": "*",
+            "X-Request-ID": req_id or "",
         },
     )
 

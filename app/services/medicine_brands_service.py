@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import logging
+from fastapi import HTTPException, status
 
 from app.repositories.medicine_brands_repository import MedicineBrandsRepository
 from app.repositories.medicines_repository import MedicinesRepository
@@ -97,6 +98,23 @@ class MedicineBrandsService(BaseService):
         """Update a medicine brand. When is_available is set to True, parent medicine becomes available."""
         logger.info(f"Updating medicine brand: {brand_id}")
         update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+
+        # Validation: cannot mark a brand available if its parent medicine is inactive/deleted
+        if update_data.get("is_available") is True:
+            existing = await self.repository.get_by_id(brand_id)
+            if not existing:
+                return None
+            if existing.medicine_id:
+                med_row = await self.session.execute(
+                    select(Medicine).where(Medicine.id == existing.medicine_id, Medicine.is_deleted == False)
+                )
+                med = med_row.scalar_one_or_none()
+                if not med or med.is_active is False:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Cannot mark brand as available because the parent medicine is inactive or deleted.",
+                    )
+
         brand = await self.repository.update(brand_id, update_data, updated_by, updated_ip)
         if not brand:
             return None

@@ -1,6 +1,9 @@
 """
 Seed script to add demo data for customer-facing pages.
-Run: python seed_demo_data.py
+Run from backend directory (with venv activated): python seed_demo_data.py
+
+Production: Run migrations first (app startup does this), then seed_rbac_data.py
+(if fresh DB), then this script. Medicines and brands are seeded with is_available=true.
 """
 import asyncio
 from sqlalchemy import text
@@ -183,9 +186,9 @@ async def seed():
                     continue
                 await session.execute(text("""
                     INSERT INTO medicines (name, dosage_form, therapeutic_category_id, is_prescription_required, is_controlled,
-                        schedule_type, description, is_active, is_deleted, created_by, created_ip)
+                        schedule_type, description, is_active, is_available, is_deleted, created_by, created_ip)
                     VALUES (:name, :dosage, :tc_id, :rx, :ctrl, :sched, :desc,
-                        true, false, :admin_id, '127.0.0.1')
+                        true, true, false, :admin_id, '127.0.0.1')
                 """), {
                     "name": m_name, "dosage": dosage, "tc_id": tc_id,
                     "rx": rx, "ctrl": ctrl, "sched": sched, "desc": desc,
@@ -240,9 +243,9 @@ async def seed():
                     continue
                 await session.execute(text("""
                     INSERT INTO medicine_brands (medicine_id, brand_name, manufacturer, mrp,
-                        is_active, is_deleted, created_by, created_ip)
+                        is_active, is_available, is_deleted, created_by, created_ip)
                     VALUES (:mid, :brand, :mfg, :mrp,
-                        true, false, :admin_id, '127.0.0.1')
+                        true, true, false, :admin_id, '127.0.0.1')
                 """), {
                     "mid": mid, "brand": brand_name, "mfg": manufacturer, "mrp": mrp,
                     "admin_id": admin_id,

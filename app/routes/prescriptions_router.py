@@ -30,6 +30,20 @@ from datetime import datetime
 
 router = APIRouter(prefix="/api/v1/prescriptions", tags=["prescriptions"])
 
+def _sniff_mime_from_bytes(b: bytes) -> Optional[str]:
+    """Best-effort MIME sniffing using magic bytes (no external deps)."""
+    if not b:
+        return None
+    if b.startswith(b"%PDF-"):
+        return "application/pdf"
+    if b.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if b.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if b.startswith(b"RIFF") and b[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
 
 def _prescription_response_from_manifest(entry_id: str, entry: dict) -> PrescriptionResponse:
     """Build PrescriptionResponse from a local manifest entry."""
@@ -71,7 +85,7 @@ async def upload_prescription(
     """
     from app.schemas.prescriptions_schema import PrescriptionCreateRequest
 
-    # Validate file type
+    # Validate file type (declared)
     valid_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf']
     if file.content_type not in valid_types:
         raise HTTPException(
@@ -79,16 +93,28 @@ async def upload_prescription(
             detail=f"Invalid file type. Allowed types: {', '.join(valid_types)}"
         )
     
-    # Validate file size (max 5MB)
-    max_size = 5 * 1024 * 1024  # 5MB
-    file_content = await file.read()
+    # Validate file size and sniff MIME from bytes (prevents spoofed content-type)
+    max_size = int(settings.MAX_UPLOAD_SIZE or 0) or (10 * 1024 * 1024)
+    file_content = await file.read(max_size + 1)
     await file.seek(0)  # Reset file pointer
     
     if len(file_content) > max_size:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File size exceeds maximum allowed size (5MB)"
+            detail=f"File size exceeds maximum allowed size ({max_size} bytes)"
         )
+
+    sniffed = _sniff_mime_from_bytes(file_content[:16])
+    if sniffed:
+        declared = (file.content_type or "").lower()
+        # Treat image/jpg as image/jpeg
+        if declared == "image/jpg":
+            declared = "image/jpeg"
+        if sniffed != declared:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File content does not match the declared file type.",
+            )
     
     # Save file to server (local disk)
     storage_service = StorageService()

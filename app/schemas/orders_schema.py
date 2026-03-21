@@ -23,30 +23,26 @@ class OrderCreateRequest(BaseCreateRequest):
     delivery_address: str = Field(..., description="Delivery address")
     pincode: Optional[str] = Field(None, max_length=10, description="PIN code")
     city: Optional[str] = Field(None, max_length=100, description="City")
-    order_source: str = Field(..., max_length=50, description="Order source (ONLINE, WALK_IN)")
     order_status: str = Field(default="PENDING", max_length=50, description="Order status")
-    approval_status: str = Field(default="PENDING", max_length=50, description="Approval status")
     total_amount: Decimal = Field(..., description="Subtotal before discounts")
     discount_amount: Decimal = Field(default=0, description="Discount amount")
     delivery_fee: Decimal = Field(default=0, description="Delivery fee")
     final_amount: Decimal = Field(..., description="Final amount after discounts + delivery")
     payment_method: str = Field(..., max_length=50, description="Payment method (RAZORPAY, CASH, UPI)")
-    prescription_id: Optional[str] = Field(None, max_length=100, description="Prescription reference")
     processed_by: Optional[UUID] = Field(None, description="Staff user who processed the order")
     notes: Optional[str] = Field(None, description="Order notes")
+    prescription_path: Optional[str] = Field(None, description="Stored path/URL for prescription file if any")
 
     model_config = {"json_schema_extra": {"example": {
         "customer_name": "Ravi Kumar",
         "customer_phone": "9876543210",
         "delivery_address": "123 Main St, Chennai",
-        "order_source": "ONLINE",
         "order_status": "PENDING",
-        "approval_status": "PENDING",
         "total_amount": 350.00,
         "discount_amount": 50.00,
         "delivery_fee": 30.00,
         "final_amount": 330.00,
-        "payment_method": "RAZORPAY"
+        "payment_method": "RAZORPAY",
     }}}
 
 
@@ -60,21 +56,18 @@ class OrderUpdateRequest(BaseUpdateRequest):
     delivery_address: Optional[str] = Field(None, description="Delivery address")
     pincode: Optional[str] = Field(None, max_length=10, description="PIN code")
     city: Optional[str] = Field(None, max_length=100, description="City")
-    order_source: Optional[str] = Field(None, max_length=50, description="Order source")
     order_status: Optional[str] = Field(None, max_length=50, description="Order status")
-    approval_status: Optional[str] = Field(None, max_length=50, description="Approval status")
     total_amount: Optional[Decimal] = Field(None, description="Subtotal before discounts")
     discount_amount: Optional[Decimal] = Field(None, description="Discount amount")
     delivery_fee: Optional[Decimal] = Field(None, description="Delivery fee")
     final_amount: Optional[Decimal] = Field(None, description="Final amount")
     payment_method: Optional[str] = Field(None, max_length=50, description="Payment method")
-    prescription_id: Optional[str] = Field(None, max_length=100, description="Prescription reference")
     processed_by: Optional[UUID] = Field(None, description="Staff user who processed the order")
     notes: Optional[str] = Field(None, description="Order notes")
+    prescription_path: Optional[str] = Field(None, description="Prescription file path/URL")
 
     model_config = {"json_schema_extra": {"example": {
         "order_status": "CONFIRMED",
-        "approval_status": "APPROVED"
     }}}
 
 
@@ -91,17 +84,15 @@ class OrderResponse(BaseResponse):
     pincode: Optional[str] = Field(None, description="PIN code")
     city: Optional[str] = Field(None, description="City")
     payment_completed_at: Optional[datetime] = Field(None, description="When payment was completed")
-    order_source: str = Field(..., description="Order source")
     order_status: str = Field(..., description="Order status")
-    approval_status: str = Field(..., description="Approval status")
     total_amount: Decimal = Field(..., description="Subtotal before discounts")
     discount_amount: Decimal = Field(..., description="Discount amount")
     delivery_fee: Decimal = Field(..., description="Delivery fee")
     final_amount: Decimal = Field(..., description="Final amount after discounts + delivery")
     payment_method: str = Field(..., description="Payment method")
-    prescription_id: Optional[str] = Field(None, description="Prescription reference")
     processed_by: Optional[UUID] = Field(None, description="Staff who processed")
     notes: Optional[str] = Field(None, description="Order notes")
+    prescription_path: Optional[str] = Field(None, description="Prescription file path/URL")
 
     model_config = {"json_schema_extra": {"example": {
         "id": "o1e12345-6789-0123-4567-890123456789",
@@ -109,15 +100,12 @@ class OrderResponse(BaseResponse):
         "customer_name": "Ravi Kumar",
         "customer_phone": "9876543210",
         "delivery_address": "123 Main St, Chennai",
-        "order_source": "ONLINE",
         "order_status": "CONFIRMED",
-        "approval_status": "APPROVED",
         "total_amount": 350.00,
         "discount_amount": 50.00,
         "delivery_fee": 30.00,
         "final_amount": 330.00,
         "payment_method": "RAZORPAY",
-        "prescription_id": None,
         "processed_by": None,
         "notes": None,
         "created_by": "u123e456-7890-1234-5678-901234567890",
@@ -126,7 +114,7 @@ class OrderResponse(BaseResponse):
         "updated_by": None,
         "updated_at": None,
         "updated_ip": None,
-        "is_deleted": False
+        "is_deleted": False,
     }}}
 
 
@@ -143,14 +131,12 @@ class OrderDetailResponse(BaseModel):
             "customer_name": "Ravi Kumar",
             "customer_phone": "9876543210",
             "delivery_address": "123 Main St, Chennai",
-            "order_source": "ONLINE",
             "order_status": "CONFIRMED",
-            "approval_status": "APPROVED",
             "total_amount": 350.00,
             "discount_amount": 50.00,
             "delivery_fee": 30.00,
             "final_amount": 330.00,
-            "payment_method": "RAZORPAY"
+            "payment_method": "RAZORPAY",
         },
         "items": [
             {
@@ -160,7 +146,7 @@ class OrderDetailResponse(BaseModel):
                 "quantity": 2,
                 "unit_price": 175.00,
                 "total_price": 350.00,
-                "requires_prescription": False
+                "requires_prescription": False,
             }
         ],
         "payment": {
@@ -169,11 +155,12 @@ class OrderDetailResponse(BaseModel):
             "payment_status": "SUCCESS",
             "amount": 330.00,
             "merchant_transaction_id": "abc123def456",
-            "gateway_transaction_id": "T2302231234567890"
-        }
+            "gateway_transaction_id": "T2302231234567890",
+        },
     }}}
 
 
 class OrderListResponse(ListResponse[OrderResponse]):
     """Response model for order list with pagination."""
+
     pass

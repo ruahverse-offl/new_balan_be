@@ -139,12 +139,20 @@ async def get_my_permissions(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get current user's permissions and role.
+    Get current user's permission codes, role name, DB-driven admin ``menu_items``,
+    and ``menu_keys`` (task codes only, for backward compatibility).
     """
     rbac_service = RBACService(db)
     role = await rbac_service.get_user_role(current_user_id)
     role_code = role.name if role else "CUSTOMER"
-    return {"permissions": permissions, "role_code": role_code}
+    menu_items = await rbac_service.get_sidebar_menu_items(current_user_id)
+    menu_keys = [m["code"] for m in menu_items]
+    return {
+        "permissions": permissions,
+        "role_code": role_code,
+        "menu_items": menu_items,
+        "menu_keys": menu_keys,
+    }
 
 
 @router.get("/customer-role-id", status_code=status.HTTP_200_OK)

@@ -26,7 +26,7 @@ Before starting operations, ensure you have collected:
 - [ ] **Therapeutic Categories** - Medicine categories (Antibiotic, Pain Reliever, etc.)
 - [ ] **Medicine Catalog** - Complete medicine information with images
 - [ ] **User Accounts** - Staff and pharmacist accounts
-- [ ] **Initial Inventory** - Product batches for existing stock
+- [ ] **Initial Inventory** - Stock rows in `product_batches` (direct DB; no Product Batches admin API)
 
 ---
 
@@ -90,7 +90,7 @@ Before starting operations, ensure you have collected:
 | `PAYMENT_REFUND` | Process refunds | Managers |
 | `USER_MANAGE` | Manage user accounts | Admins |
 | `REPORT_VIEW` | View reports and analytics | Managers, Admins |
-| `DASHBOARD_VIEW` | View dashboards | Managers, Admins |
+| `DASHBOARD_VIEW` | View admin Statistics KPIs (`GET /api/v1/kpi/summary`) | Managers, Admins |
 
 **Example Data:**
 ```json
@@ -109,7 +109,7 @@ Before starting operations, ensure you have collected:
   },
   {
     "code": "INVENTORY_UPDATE",
-    "description": "Can update inventory quantities and add new batches"
+    "description": "Can update inventory quantities (stock levels)"
   }
 ]
 ```
@@ -264,42 +264,9 @@ This is the **most important** master data. You need to set up your complete med
 ]
 ```
 
-#### B. Medicine Compositions (Active Ingredients)
+#### B. Medicine Compositions (removed)
 
-**Data to Collect for Each Medicine:**
-
-For each medicine, you need to specify its active ingredients (salts) and strengths.
-
-| Field | Required | Description | Example |
-|-------|----------|-------------|---------|
-| `medicine_id` | ✅ Yes | Medicine UUID | Get from medicines |
-| `salt_name` | ✅ Yes | Active ingredient name | `"Paracetamol"`, `"Ibuprofen"` |
-| `strength` | ✅ Yes | Dosage strength | `"500"`, `"250"`, `"650"` |
-| `unit` | ✅ Yes | Unit of measurement | `"mg"`, `"ml"`, `"g"`, `"IU"` |
-
-**Example Compositions:**
-```json
-[
-  {
-    "medicine_id": "<PARACETAMOL_MEDICINE_ID>",
-    "salt_name": "Paracetamol",
-    "strength": "500",
-    "unit": "mg"
-  },
-  {
-    "medicine_id": "<PARACETAMOL_CAFFEINE_MEDICINE_ID>",
-    "salt_name": "Paracetamol",
-    "strength": "500",
-    "unit": "mg"
-  },
-  {
-    "medicine_id": "<PARACETAMOL_CAFFEINE_MEDICINE_ID>",
-    "salt_name": "Caffeine",
-    "strength": "65",
-    "unit": "mg"
-  }
-]
-```
+The **Medicine Compositions** CRUD API and admin UI were removed from the application. A legacy `medicine_compositions` table may still exist in older databases; you can document active ingredients in the medicine **description** or omit this layer for new deployments.
 
 #### C. Medicine Brands
 
@@ -503,15 +470,7 @@ If `is_pharmacist = true`, also collect:
 | Paracetamol | Tablet | Pain Reliever | false | false | OTC | Pain reliever and fever reducer |
 | Amoxicillin | Capsule | Antibiotic | true | false | Schedule H | Antibiotic for bacterial infections |
 
-#### 3. Medicine Compositions Template
-
-| medicine_name | salt_name | strength | unit |
-|---------------|-----------|----------|------|
-| Paracetamol | Paracetamol | 500 | mg |
-| Paracetamol + Caffeine | Paracetamol | 500 | mg |
-| Paracetamol + Caffeine | Caffeine | 65 | mg |
-
-#### 4. Medicine Brands Template
+#### 3. Medicine Brands Template
 
 | medicine_name | brand_name | manufacturer | mrp | description | image_url | barcode |
 |---------------|------------|--------------|-----|-------------|-----------|---------|
@@ -533,8 +492,7 @@ If `is_pharmacist = true`, also collect:
    - Create all medicine categories
 
 3. **Step 3: Medicines**
-   - Create generic medicines
-   - Add medicine compositions for each medicine
+   - Create generic medicines (optionally describe salts/strengths in the description field)
 
 4. **Step 4: Medicine Brands**
    - Create branded versions
@@ -545,7 +503,7 @@ If `is_pharmacist = true`, also collect:
    - Create pharmacist profiles
 
 6. **Step 6: Initial Inventory**
-   - Add product batches for existing stock
+   - Load `product_batches` rows for existing stock (database; no public batch CRUD API)
 
 ---
 
@@ -565,7 +523,6 @@ Before importing master data, ensure you have:
 ### Medicine Catalog
 - [ ] List of all generic medicines
 - [ ] Dosage forms for each medicine
-- [ ] Active ingredients (compositions) for each medicine
 - [ ] Brand names for each medicine
 - [ ] Manufacturer information
 - [ ] MRP (Maximum Retail Price) for each brand

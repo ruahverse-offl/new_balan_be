@@ -18,4 +18,4 @@ class MedicinesRepository(BaseRepository[Medicine]):
     
     def _get_searchable_fields(self) -> List[str]:
         """Get searchable fields for medicines."""
-        return ["name", "dosage_form", "schedule_type", "description"]
+        return ["name", "description"]

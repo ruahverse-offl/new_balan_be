@@ -65,12 +65,8 @@ async def startup_event():
 
         print("[OK] Database connection verified successfully!")
 
-        # Create tables if they don't exist
+        # Create tables if they don't exist (fresh schema: M_* master, T_* transaction)
         await DatabaseConnection.create_tables()
-
-        # Run migrations (e.g. add doctor_id to appointments if missing)
-        from app.db.migrations import run_migrations
-        await run_migrations(DatabaseConnection.get_engine())
 
     except Exception as e:
         print(f"[ERROR] Failed to initialize database: {str(e)}")

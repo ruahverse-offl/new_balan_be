@@ -18,4 +18,4 @@ class OrdersRepository(BaseRepository[Order]):
     
     def _get_searchable_fields(self) -> List[str]:
         """Get searchable fields for orders."""
-        return ["order_source", "order_status", "approval_status"]
+        return ["order_status", "customer_phone", "order_reference", "customer_name"]

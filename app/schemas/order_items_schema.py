@@ -22,7 +22,6 @@ class OrderItemCreateRequest(BaseCreateRequest):
     unit_price: Decimal = Field(..., description="Unit price")
     total_price: Decimal = Field(..., description="Total price")
     requires_prescription: bool = Field(False, description="Whether prescription is required")
-    product_batch_id: Optional[UUID] = Field(None, description="Batch used (set on order approval)")
     
     model_config = {"json_schema_extra": {"example": {
         "order_id": "o1e123-4567-8901-2345-678901234567",
@@ -62,7 +61,6 @@ class OrderItemResponse(BaseResponse):
     unit_price: Decimal = Field(..., description="Unit price")
     total_price: Decimal = Field(..., description="Total price")
     requires_prescription: bool = Field(..., description="Whether prescription is required")
-    product_batch_id: Optional[UUID] = Field(None, description="Batch used (set on approval)")
     
     model_config = {"json_schema_extra": {"example": {
         "id": "oi1e123-4567-8901-2345-678901234567",

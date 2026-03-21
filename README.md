@@ -18,15 +18,13 @@ This is a comprehensive backend API for managing a medical shop/pharmacy system.
    - [Users](#4-users)
    - [Pharmacist Profiles](#5-pharmacist-profiles)
    - [Therapeutic Categories](#6-therapeutic-categories)
-   - [Medicine Compositions](#7-medicine-compositions)
-   - [Medicines](#8-medicines)
-   - [Medicine Brands](#9-medicine-brands)
-   - [Product Batches](#10-product-batches)
-   - [Inventory Transactions](#11-inventory-transactions)
-   - [Orders](#12-orders)
-   - [Payments](#13-payments)
-   - [Dashboards](#14-dashboards)
-   - [Razorpay Payment Gateway](#15-razorpay-payment-gateway)
+   - [Medicines](#7-medicines)
+   - [Medicine Brands](#8-medicine-brands)
+   - [Inventory Transactions](#10-inventory-transactions)
+   - [Orders](#11-orders)
+   - [Payments](#12-payments)
+   - [KPI summary](#13-kpi-summary-admin-statistics)
+   - [Razorpay Payment Gateway](#14-razorpay-payment-gateway)
 3. [Common Features](#common-features)
 4. [Error Handling](#error-handling)
 
@@ -510,59 +508,7 @@ Creates a new therapeutic category.
 
 ---
 
-## 7. Medicine Compositions
-
-**Base Path:** `/api/v1/medicine-compositions`
-
-### Purpose
-Medicine Compositions define the active ingredients (salts) and their strengths in a medicine. A single medicine can have multiple compositions (e.g., Paracetamol 500mg + Caffeine 65mg).
-
-### Why We Need Medicine Compositions
-- **Ingredient Tracking:** Records what active ingredients are in each medicine
-- **Strength Information:** Stores dosage strength (e.g., 500mg, 250mg)
-- **Allergy Management:** Helps identify medicines with specific ingredients for allergy patients
-- **Regulatory Compliance:** Required for proper medicine labeling and documentation
-
-### Endpoints
-
-#### Create Medicine Composition
-**POST** `/api/v1/medicine-compositions/`
-
-Creates a composition entry for a medicine.
-
-**Request Body:**
-```json
-{
-  "medicine_id": "m1e123-4567-8901-2345-678901234567",
-  "salt_name": "Paracetamol",
-  "strength": "500",
-  "unit": "mg"
-}
-```
-
-**What You Can Create:**
-- Single salt compositions: `Paracetamol 500mg`
-- Multiple salt compositions: `Paracetamol 500mg + Caffeine 65mg`
-- Different strengths: `Paracetamol 250mg`, `Paracetamol 500mg`, `Paracetamol 650mg`
-- Different units: `mg`, `ml`, `g`, `IU`
-
-**Response:** 201 Created
-
-#### Get Medicine Composition by ID
-**GET** `/api/v1/medicine-compositions/{composition_id}`
-
-#### Get Medicine Compositions List
-**GET** `/api/v1/medicine-compositions/`
-
-#### Update Medicine Composition
-**PATCH** `/api/v1/medicine-compositions/{composition_id}`
-
-#### Delete Medicine Composition (Soft Delete)
-**DELETE** `/api/v1/medicine-compositions/{composition_id}`
-
----
-
-## 8. Medicines
+## 7. Medicines
 
 **Base Path:** `/api/v1/medicines`
 
@@ -631,7 +577,7 @@ Creates a new medicine entry.
 
 ---
 
-## 9. Medicine Brands
+## 8. Medicine Brands
 
 **Base Path:** `/api/v1/medicine-brands`
 
@@ -682,70 +628,11 @@ Creates a new medicine brand.
 #### Delete Medicine Brand (Soft Delete)
 **DELETE** `/api/v1/medicine-brands/{brand_id}`
 
----
-
-## 10. Product Batches
-
-**Base Path:** `/api/v1/product-batches`
-
-### Purpose
-Product Batches track specific batches of medicine brands with their manufacturing dates, expiry dates, purchase prices, and available quantities. This is essential for inventory management and expiry tracking.
-
-### Why We Need Product Batches
-- **Expiry Management:** Tracks expiry dates to prevent selling expired medicines
-- **Batch Tracking:** Enables recall of specific batches if needed
-- **Inventory Control:** Manages quantities of each batch separately
-- **Cost Tracking:** Records purchase price for profit calculation
-- **FIFO/LIFO:** Supports First-In-First-Out or Last-In-First-Out inventory methods
-
-### Endpoints
-
-#### Create Product Batch
-**POST** `/api/v1/product-batches/`
-
-Creates a new product batch.
-
-**Request Body:**
-```json
-{
-  "medicine_brand_id": "mb1e123-4567-8901-2345-678901234567",
-  "batch_number": "BATCH-0925",
-  "expiry_date": "2026-09-30",
-  "purchase_price": 18.50,
-  "quantity_available": 120
-}
-```
-
-**What You Can Create:**
-- Batches with different expiry dates
-- Batches with different purchase prices
-- Batches with varying quantities
-- Batch numbers for tracking and recall purposes
-
-**Response:** 201 Created
-
-#### Get Product Batch by ID
-**GET** `/api/v1/product-batches/{batch_id}`
-
-#### Get Product Batches List
-**GET** `/api/v1/product-batches/`
-
-#### Update Product Batch
-**PATCH** `/api/v1/product-batches/{batch_id}`
-
-**Request Body:**
-```json
-{
-  "quantity_available": 100
-}
-```
-
-#### Delete Product Batch (Soft Delete)
-**DELETE** `/api/v1/product-batches/{batch_id}`
+Product batch stock is stored in the `product_batches` table and used internally when orders are approved (batch allocation, `order_items.product_batch_id`). There is **no** public `/product-batches` REST API.
 
 ---
 
-## 11. Inventory Transactions
+## 10. Inventory Transactions
 
 **Base Path:** `/api/v1/inventory-transactions`
 
@@ -810,7 +697,7 @@ Creates a new inventory transaction.
 
 ---
 
-## 12. Orders
+## 11. Orders
 
 **Base Path:** `/api/v1/orders`
 
@@ -889,7 +776,7 @@ Creates a new order.
 
 ---
 
-## 13. Payments
+## 12. Payments
 
 **Base Path:** `/api/v1/payments`
 
@@ -964,334 +851,33 @@ Creates a new payment record.
 
 ---
 
-## 14. Dashboards
+## 13. KPI summary (admin Statistics)
 
-**Base Path:** `/api/v1/dashboards`
+**Base Path:** `/api/v1/kpi`
 
-### Purpose
-Dashboards provide comprehensive analytics and insights for different aspects of the pharmacy management system. They include Key Performance Indicators (KPIs), alerts, and chart data for visualization.
+### Get KPI summary
+**GET** `/api/v1/kpi/summary`
 
-### Why We Need Dashboards
-- **Business Intelligence:** Real-time insights into business performance
-- **Decision Making:** Data-driven decisions for inventory, sales, and operations
-- **Monitoring:** Track KPIs and identify issues through alerts
-- **Reporting:** Visual representation of trends and patterns
-- **Performance Tracking:** Monitor growth rates, fulfillment rates, and other metrics
-
-### Dashboard Types
-
-#### 1. Finance Dashboard
-**Base Path:** `/api/v1/dashboards/finance`
-
-##### Get Finance Dashboard
-**GET** `/api/v1/dashboards/finance/`
-
-Retrieves financial analytics including revenue, orders, payments, and growth metrics.
-
-**Query Parameters:**
-- `period` (string, default: "month"): KPI period - `today`, `week`, `month`, `quarter`, `year`
-- `trend_period` (string, default: "30d"): Trend period - `7d`, `30d`, `3m`, `6m`, `1y`
-- `trend_granularity` (string, default: "daily"): Trend granularity - `daily`, `weekly`, `monthly`
-- `include_charts` (boolean, default: true): Include chart data in response
-- `monthly_trend_months` (int, default: 12, range: 1-36): Number of months for monthly trend
+Requires **DASHBOARD_VIEW**.
 
 **Response:** 200 OK
 ```json
 {
-  "kpis": {
-    "total_revenue": 5000000.00,
-    "today_revenue": 50000.00,
-    "month_revenue": 1500000.00,
-    "year_revenue": 5000000.00,
-    "total_orders": 5000,
-    "today_orders": 50,
-    "month_orders": 1500,
-    "pending_orders": 25,
-    "completed_orders": 4500,
-    "average_order_value": 1111.11,
-    "revenue_growth_rate": 15.5,
-    "payment_success_rate": 98.5,
-    "outstanding_payments": 25000.00
-  },
-  "alerts": [
-    {
-      "type": "LOW_REVENUE",
-      "severity": "WARNING",
-      "message": "Today's revenue is 20% below average",
-      "today_revenue": 50000.00,
-      "average_daily_revenue": 62500.00,
-      "percentage_below": 20.0
-    }
-  ],
-  "charts": {
-    "revenue_trend": [
-      {"date": "2026-01-01", "revenue": 50000.00}
-    ],
-    "orders_trend": [
-      {"date": "2026-01-01", "orders": 50}
-    ],
-    "payment_method_distribution": [
-      {"label": "UPI", "count": 30, "amount": 15000.00},
-      {"label": "CASH", "count": 15, "amount": 7500.00}
-    ],
-    "revenue_by_order_source": [
-      {"label": "PRESCRIPTION", "revenue": 30000.00},
-      {"label": "OTC", "revenue": 20000.00}
-    ]
-  }
+  "total_orders": 120,
+  "total_medicines": 450,
+  "total_sales": "985000.50"
 }
 ```
 
-**KPIs Included:**
-- Total revenue (all-time)
-- Today's revenue
-- Monthly and yearly revenue
-- Total orders and order counts by period
-- Average order value (AOV)
-- Revenue growth rate
-- Payment success rate
-- Outstanding payments
+- **total_orders** — count of non-deleted orders
+- **total_medicines** — count of non-deleted medicine records
+- **total_sales** — sum of each order’s `final_amount` (non-deleted, excluding `order_status` = `CANCELLED`)
 
-**Alerts:**
-- `LOW_REVENUE` - Revenue below average
-- `HIGH_OUTSTANDING` - High outstanding payments
-- `PAYMENT_FAILURE` - Payment failures detected
-
-**Charts:**
-- Revenue trends over time
-- Orders trends
-- Revenue vs orders comparison
-- Payment method distribution
-- Revenue by payment method
-- Daily revenue comparison
-- Monthly revenue trend
-- Order status distribution
-- Revenue by order source
-- Average order value trend
-- Revenue growth rate
-- Payment status breakdown
-
-#### 2. Inventory Dashboard
-**Base Path:** `/api/v1/dashboards/inventory`
-
-##### Get Inventory Dashboard
-**GET** `/api/v1/dashboards/inventory/`
-
-Retrieves inventory analytics including stock levels, expiry tracking, and stock movements.
-
-**Query Parameters:**
-- `period` (string, default: "30d"): Time period - `30d`, `3m`, `1y`
-- `include_charts` (boolean, default: true): Include chart data in response
-- `low_stock_threshold` (int, default: 10, min: 1): Low stock threshold for alerts
-- `expiry_days` (int, default: 30, min: 1): Days ahead for expiring soon alerts
-- `top_products_limit` (int, default: 10, range: 1-50): Number of top products to return
-- `expiry_months` (int, default: 6, range: 1-24): Months for expiry timeline
-
-**Response:** 200 OK
-```json
-{
-  "kpis": {
-    "total_stock_value": 1250000.00,
-    "total_stock_quantity": 5000,
-    "total_active_products": 150,
-    "total_batches": 200,
-    "low_stock_count": 15,
-    "out_of_stock_count": 5,
-    "expiring_soon_count": 8,
-    "expired_count": 2,
-    "stock_turnover_rate": 2.5,
-    "average_stock_value": 8333.33
-  },
-  "alerts": [
-    {
-      "type": "LOW_STOCK",
-      "severity": "WARNING",
-      "message": "Crocin is running low (5 units remaining)",
-      "medicine_brand_id": "uuid",
-      "medicine_brand_name": "Crocin",
-      "current_quantity": 5,
-      "threshold": 10
-    },
-    {
-      "type": "EXPIRING_SOON",
-      "severity": "WARNING",
-      "message": "Batch BATCH-0925 expires in 15 days",
-      "batch_id": "uuid",
-      "batch_number": "BATCH-0925",
-      "expiry_date": "2026-02-15"
-    }
-  ],
-  "charts": {
-    "stock_value_trend": [
-      {"date": "2026-01-01", "value": 1200000.00}
-    ],
-    "stock_by_category": [
-      {"label": "Antibiotic", "value": 300000.00, "quantity": 1200}
-    ],
-    "top_products": [
-      {"label": "Crocin", "value": 50000.00, "quantity": 200}
-    ],
-    "expiry_timeline": [
-      {"date": "2026-02-01", "count": 5}
-    ]
-  }
-}
-```
-
-**KPIs Included:**
-- Total stock value and quantity
-- Active products and batches count
-- Low stock and out of stock counts
-- Expiring soon and expired counts
-- Stock turnover rate
-- Average stock value per product
-
-**Alerts:**
-- `LOW_STOCK` - Products below threshold
-- `OUT_OF_STOCK` - Products with zero stock
-- `EXPIRING_SOON` - Batches expiring within specified days
-- `EXPIRED` - Expired batches
-
-**Charts:**
-- Stock value trend over time
-- Stock by category
-- Top products by stock value
-- Stock distribution (low/normal/out)
-- Expiry timeline
-- Stock movement trend
-- Stock by dosage form
-
-#### 3. Orders Dashboard
-**Base Path:** `/api/v1/dashboards/orders`
-
-##### Get Orders Dashboard
-**GET** `/api/v1/dashboards/orders/`
-
-Retrieves order analytics including order counts, status distribution, and processing times.
-
-**Query Parameters:**
-- `period` (string, default: "month"): KPI period - `today`, `week`, `month`, `quarter`, `year`
-- `include_charts` (boolean, default: true): Include chart data in response
-- `trend_days` (int, default: 30, range: 1-365): Days for trend charts
-
-**Response:** 200 OK
-```json
-{
-  "kpis": {
-    "total_orders": 5000,
-    "today_orders": 50,
-    "month_orders": 1500,
-    "pending_orders": 25,
-    "approval_pending": 10,
-    "completed_orders": 4500,
-    "cancelled_orders": 50,
-    "average_processing_time_hours": 2.5,
-    "fulfillment_rate": 90.0
-  },
-  "alerts": [
-    {
-      "type": "HIGH_PENDING",
-      "severity": "WARNING",
-      "message": "25 pending orders exceed threshold of 20",
-      "pending_count": 25,
-      "threshold": 20
-    }
-  ],
-  "charts": {
-    "orders_over_time": [
-      {"date": "2026-01-01", "orders": 50}
-    ],
-    "order_status_distribution": [
-      {"label": "COMPLETED", "count": 4500},
-      {"label": "PENDING", "count": 25}
-    ],
-    "orders_by_source": [
-      {"label": "PRESCRIPTION", "count": 30},
-      {"label": "OTC", "count": 20}
-    ],
-    "processing_time_analysis": [
-      {"date": "2026-01-01", "average_time": 2.5}
-    ]
-  }
-}
-```
-
-**KPIs Included:**
-- Total orders (all-time)
-- Today's and monthly orders
-- Pending orders count
-- Approval pending count
-- Completed and cancelled orders
-- Average processing time (hours)
-- Fulfillment rate (%)
-
-**Alerts:**
-- `HIGH_PENDING` - High number of pending orders
-- `LONG_PROCESSING` - Long average processing times
-- `HIGH_CANCELLATION` - High cancellation rate
-
-**Charts:**
-- Orders over time
-- Order status distribution
-- Orders by source
-- Processing time analysis
-
-#### 4. Sales Dashboard
-**Base Path:** `/api/v1/dashboards/sales`
-
-##### Get Sales Dashboard
-**GET** `/api/v1/dashboards/sales/`
-
-Retrieves sales analytics including top products, sales trends, and category breakdowns.
-
-**Query Parameters:**
-- `period` (string, default: "30d"): Time period - `30d`, `3m`, `1y`
-- `include_charts` (boolean, default: true): Include chart data in response
-- `top_products_limit` (int, default: 10, range: 1-50): Number of top products to return
-
-**Response:** 200 OK
-```json
-{
-  "kpis": {
-    "total_sales_quantity": 10000,
-    "top_selling_product": "Crocin",
-    "sales_growth_rate": 12.5,
-    "average_sales_per_day": 333.33,
-    "customer_count": 500
-  },
-  "charts": {
-    "top_products": [
-      {"label": "Crocin", "quantity": 500, "revenue": 12500.00}
-    ],
-    "sales_by_category": [
-      {"label": "Antibiotic", "quantity": 2000, "revenue": 50000.00}
-    ],
-    "sales_trend": [
-      {"date": "2026-01-01", "quantity": 333, "revenue": 8325.00}
-    ],
-    "sales_by_dosage_form": [
-      {"label": "Tablet", "quantity": 6000, "count": 3000}
-    ]
-  }
-}
-```
-
-**KPIs Included:**
-- Total sales quantity
-- Top selling product name
-- Sales growth rate (%)
-- Average sales per day
-- Unique customer count
-
-**Charts:**
-- Top selling products
-- Sales by category
-- Sales trend over time
-- Sales by dosage form
+The previous multi-dashboard APIs under `/api/v1/dashboards/*` (finance, inventory, orders, sales) have been removed in favor of this single aggregate.
 
 ---
 
-## 15. Razorpay Payment Gateway
+## 14. Razorpay Payment Gateway
 
 **Base Path:** `/api/v1/razorpay`
 

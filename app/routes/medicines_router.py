@@ -14,7 +14,7 @@ from app.schemas.medicines_schema import (
     MedicineCreateRequest,
     MedicineUpdateRequest,
     MedicineResponse,
-    MedicineListResponse
+    MedicineListResponse,
 )
 from app.utils.auth import get_current_user_id_optional
 from app.utils.rbac import require_permission
@@ -28,7 +28,7 @@ async def create_medicine(
     data: MedicineCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: Optional[UUID] = Depends(get_current_user_id_optional)
+    current_user_id: Optional[UUID] = Depends(get_current_user_id_optional),
 ):
     """Create a new medicine."""
     user_id = current_user_id or UUID("00000000-0000-0000-0000-000000000000")
@@ -38,22 +38,7 @@ async def create_medicine(
     return medicine
 
 
-@router.get("/{medicine_id}", response_model=MedicineResponse)
-async def get_medicine_by_id(
-    medicine_id: UUID,
-    db: AsyncSession = Depends(get_db)
-):
-    """Get medicine by ID."""
-    service = MedicinesService(db)
-    medicine = await service.get_medicine_by_id(medicine_id)
-    if not medicine:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Medicine with ID {medicine_id} not found"
-        )
-    return medicine
-
-
+# List route MUST be registered before /{medicine_id} so GET /api/v1/medicines/ matches list.
 @router.get("/", response_model=MedicineListResponse)
 async def get_medicines_list(
     limit: int = Query(default=20, ge=1, le=500),
@@ -61,16 +46,47 @@ async def get_medicines_list(
     search: Optional[str] = Query(default=None),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
-    is_available: Optional[bool] = Query(default=None, description="Filter by availability (true = only available for customers)"),
-    db: AsyncSession = Depends(get_db)
+    is_available: Optional[bool] = Query(
+        default=None, description="Filter by availability (true = only available for customers)"
+    ),
+    include_brands: bool = Query(
+        default=False,
+        description="When true, each medicine includes a nested brands array",
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get list of medicines with pagination, search, and sort."""
     service = MedicinesService(db)
     result = await service.get_medicines_list(
-        limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
-        is_available=is_available
+        limit=limit,
+        offset=offset,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        is_available=is_available,
+        include_brands=include_brands,
     )
     return result
+
+
+@router.get("/{medicine_id}", response_model=MedicineResponse)
+async def get_medicine_by_id(
+    medicine_id: UUID,
+    include_brands: bool = Query(
+        default=False,
+        description="When true, response includes nested brands for this medicine",
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get medicine by ID."""
+    service = MedicinesService(db)
+    medicine = await service.get_medicine_by_id(medicine_id, include_brands=include_brands)
+    if not medicine:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Medicine with ID {medicine_id} not found",
+        )
+    return medicine
 
 
 @router.patch("/{medicine_id}", response_model=MedicineResponse)
@@ -79,7 +95,7 @@ async def update_medicine(
     data: MedicineUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE"))
+    current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE")),
 ):
     """Update a medicine (staff). Setting is_available=false marks all its brands unavailable."""
     ip_address = get_client_ip(request)
@@ -88,7 +104,7 @@ async def update_medicine(
     if not medicine:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Medicine with ID {medicine_id} not found"
+            detail=f"Medicine with ID {medicine_id} not found",
         )
     return medicine
 
@@ -98,7 +114,7 @@ async def delete_medicine(
     medicine_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: Optional[UUID] = Depends(get_current_user_id_optional)
+    current_user_id: Optional[UUID] = Depends(get_current_user_id_optional),
 ):
     """Soft delete a medicine."""
     user_id = current_user_id or UUID("00000000-0000-0000-0000-000000000000")
@@ -108,6 +124,6 @@ async def delete_medicine(
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Medicine with ID {medicine_id} not found"
+            detail=f"Medicine with ID {medicine_id} not found",
         )
     return {"message": "Medicine deleted successfully", "id": str(medicine_id)}

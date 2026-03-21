@@ -14,13 +14,11 @@ Each module has a dedicated test file following the naming convention: `test_{mo
 4. `test_users.py` - Tests for Users CRUD operations
 5. `test_pharmacist_profiles.py` - Tests for Pharmacist Profiles CRUD operations
 6. `test_therapeutic_categories.py` - Tests for Therapeutic Categories CRUD operations
-7. `test_medicine_compositions.py` - Tests for Medicine Compositions CRUD operations
-8. `test_medicine_brands.py` - Tests for Medicine Brands CRUD operations
-9. `test_medicines.py` - Tests for Medicines CRUD operations
-10. `test_product_batches.py` - Tests for Product Batches CRUD operations
-11. `test_inventory_transactions.py` - Tests for Inventory Transactions CRUD operations
-12. `test_orders.py` - Tests for Orders CRUD operations
-13. `test_payments.py` - Tests for Payments CRUD operations
+7. `test_medicine_brands.py` - Tests for Medicine Brands CRUD operations
+8. `test_medicines.py` - Tests for Medicines CRUD operations
+9. `test_inventory_transactions.py` - Tests for Inventory Transactions CRUD operations
+10. `test_orders.py` - Tests for Orders CRUD operations
+11. `test_payments.py` - Tests for Payments CRUD operations
 
 ## Test Coverage
 

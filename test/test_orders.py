@@ -29,9 +29,14 @@ class TestOrdersCRUD:
         # Create order
         order_data = {
             "customer_id": str(user_id),
-            "order_source": "PRESCRIPTION",
+            "customer_phone": "9876543210",
+            "delivery_address": "1 Test St",
             "order_status": "PENDING",
-            "approval_status": "PENDING"
+            "total_amount": "100.00",
+            "discount_amount": "0.00",
+            "delivery_fee": "0.00",
+            "final_amount": "100.00",
+            "payment_method": "CASH",
         }
         response = await test_client.post("/api/v1/orders/", json=order_data)
         
@@ -59,9 +64,14 @@ class TestOrdersCRUD:
         
         order_data = {
             "customer_id": str(user_id),
-            "order_source": "PRESCRIPTION",
+            "customer_phone": "9876543210",
+            "delivery_address": "1 Test St",
             "order_status": "PENDING",
-            "approval_status": "PENDING"
+            "total_amount": "100.00",
+            "discount_amount": "0.00",
+            "delivery_fee": "0.00",
+            "final_amount": "100.00",
+            "payment_method": "CASH",
         }
         create_resp = await test_client.post("/api/v1/orders/", json=order_data)
         order_id = create_resp.json()["id"]
@@ -89,16 +99,21 @@ class TestOrdersCRUD:
                 **sample_user_data,
                 "role_id": str(role_id),
                 "email": f"customer{i}@example.com",
-                "username": f"customer{i}"
+                "mobile_number": f"987654321{i}",
             }
             user_resp = await test_client.post("/api/v1/users/", json=user_data)
             user_id = user_resp.json()["id"]
             
             order_data = {
                 "customer_id": str(user_id),
-                "order_source": "PRESCRIPTION",
+                "customer_phone": f"987654321{i}",
+                "delivery_address": f"{i} Test St",
                 "order_status": "PENDING",
-                "approval_status": "PENDING"
+                "total_amount": "100.00",
+                "discount_amount": "0.00",
+                "delivery_fee": "0.00",
+                "final_amount": "100.00",
+                "payment_method": "CASH",
             }
             await test_client.post("/api/v1/orders/", json=order_data)
         
@@ -126,9 +141,14 @@ class TestOrdersCRUD:
         
         order_data = {
             "customer_id": str(user_id),
-            "order_source": "PRESCRIPTION",
+            "customer_phone": "9876543210",
+            "delivery_address": "1 Test St",
             "order_status": "PENDING",
-            "approval_status": "PENDING"
+            "total_amount": "100.00",
+            "discount_amount": "0.00",
+            "delivery_fee": "0.00",
+            "final_amount": "100.00",
+            "payment_method": "CASH",
         }
         await test_client.post("/api/v1/orders/", json=order_data)
         
@@ -156,9 +176,14 @@ class TestOrdersCRUD:
         
         order_data = {
             "customer_id": str(user_id),
-            "order_source": "PRESCRIPTION",
+            "customer_phone": "9876543210",
+            "delivery_address": "1 Test St",
             "order_status": "PENDING",
-            "approval_status": "PENDING"
+            "total_amount": "100.00",
+            "discount_amount": "0.00",
+            "delivery_fee": "0.00",
+            "final_amount": "100.00",
+            "payment_method": "CASH",
         }
         create_resp = await test_client.post("/api/v1/orders/", json=order_data)
         order_id = create_resp.json()["id"]
@@ -188,9 +213,14 @@ class TestOrdersCRUD:
         
         order_data = {
             "customer_id": str(user_id),
-            "order_source": "PRESCRIPTION",
+            "customer_phone": "9876543210",
+            "delivery_address": "1 Test St",
             "order_status": "PENDING",
-            "approval_status": "PENDING"
+            "total_amount": "100.00",
+            "discount_amount": "0.00",
+            "delivery_fee": "0.00",
+            "final_amount": "100.00",
+            "payment_method": "CASH",
         }
         create_resp = await test_client.post("/api/v1/orders/", json=order_data)
         order_id = create_resp.json()["id"]

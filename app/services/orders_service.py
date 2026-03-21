@@ -3,15 +3,14 @@ Orders Service
 Business logic layer for orders
 """
 
-from typing import Optional, List
+from typing import Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import logging
 
 from app.repositories.orders_repository import OrdersRepository
-from app.repositories.inventory_transactions_repository import InventoryTransactionsRepository
-from app.db.models import OrderItem, ProductBatch, Payment
+from app.db.models import OrderItem, Payment
 from app.schemas.orders_schema import (
     OrderCreateRequest,
     OrderUpdateRequest,
@@ -29,11 +28,11 @@ logger = logging.getLogger(__name__)
 
 class OrdersService(BaseService):
     """Service for orders operations."""
-    
+
     def __init__(self, session: AsyncSession):
         repository = OrdersRepository(session)
         super().__init__(repository, session)
-    
+
     async def create_order(
         self,
         data: OrderCreateRequest,
@@ -46,7 +45,7 @@ class OrdersService(BaseService):
         order = await self.repository.create(order_data, created_by, created_ip)
         order_dict = self._model_to_dict(order)
         return OrderResponse(**order_dict)
-    
+
     async def get_order_by_id(self, order_id: UUID) -> Optional[OrderResponse]:
         """Get order by ID."""
         order = await self.repository.get_by_id(order_id)
@@ -105,7 +104,7 @@ class OrdersService(BaseService):
             items=order_responses,
             pagination=PaginationResponse(**pagination)
         )
-    
+
     async def update_order(
         self,
         order_id: UUID,
@@ -120,71 +119,8 @@ class OrdersService(BaseService):
         if not order:
             return None
 
-        # When order is approved, create inventory SALE transactions to decrement stock
-        if "approval_status" in update_data and update_data["approval_status"].upper() == "APPROVED":
-            await self._create_sale_transactions(order_id, updated_by, updated_ip)
-
         order_dict = self._model_to_dict(order)
         return OrderResponse(**order_dict)
-    
-    async def _create_sale_transactions(
-        self,
-        order_id: UUID,
-        created_by: UUID,
-        created_ip: str
-    ):
-        """Create inventory SALE transactions for each order item and decrement batch stock."""
-        try:
-            # Fetch order items
-            stmt = select(OrderItem).where(
-                OrderItem.order_id == order_id,
-                OrderItem.is_deleted == False
-            )
-            result = await self.session.execute(stmt)
-            items = result.scalars().all()
-
-            inv_repo = InventoryTransactionsRepository(self.session)
-
-            for item in items:
-                # Find the latest batch for this medicine brand with available stock
-                batch_stmt = (
-                    select(ProductBatch)
-                    .where(ProductBatch.medicine_brand_id == item.medicine_brand_id)
-                    .where(ProductBatch.is_deleted == False)
-                    .where(ProductBatch.quantity_available >= item.quantity)
-                    .order_by(ProductBatch.expiry_date.asc())  # FEFO: first expiry, first out
-                    .limit(1)
-                )
-                batch_result = await self.session.execute(batch_stmt)
-                batch = batch_result.scalar_one_or_none()
-
-                if batch:
-                    # Decrement batch stock
-                    batch.quantity_available -= item.quantity
-
-                    # Record which batch was used on the order item (for audit/recalls)
-                    item.product_batch_id = batch.id
-
-                    # Create inventory transaction record
-                    txn_data = {
-                        "medicine_brand_id": item.medicine_brand_id,
-                        "product_batch_id": batch.id,
-                        "transaction_type": "SALE",
-                        "quantity_change": -item.quantity,
-                        "reference_order_id": order_id,
-                        "remarks": f"Order approved - sold {item.quantity} units"
-                    }
-                    await inv_repo.create(txn_data, created_by, created_ip)
-                else:
-                    logger.warning(
-                        f"No batch with sufficient stock for medicine_brand_id={item.medicine_brand_id}, "
-                        f"order_id={order_id}, qty={item.quantity}"
-                    )
-
-            await self.session.flush()
-            logger.info(f"Inventory sale transactions created for order {order_id}")
-        except Exception as e:
-            logger.error(f"Error creating sale transactions for order {order_id}: {e}")
 
     async def delete_order(
         self,

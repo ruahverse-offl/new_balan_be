@@ -21,6 +21,24 @@ from app.services.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 
+def _map_delivery_aliases_in(settings_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Map API field ``free_delivery_min_amount`` to DB column ``free_delivery_threshold``."""
+    data = dict(settings_data)
+    if "free_delivery_min_amount" in data:
+        v = data.pop("free_delivery_min_amount", None)
+        if v is not None:
+            data["free_delivery_threshold"] = v
+    return data
+
+
+def _enrich_delivery_dict(settings_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose ``free_delivery_min_amount`` alongside ``free_delivery_threshold``."""
+    d = dict(settings_dict)
+    ft = d.get("free_delivery_threshold")
+    d["free_delivery_min_amount"] = ft
+    return d
+
+
 def _to_jsonable_value(v: Any) -> Any:
     """Convert a single value to JSON-serializable type."""
     if v is None:
@@ -62,8 +80,15 @@ class DeliverySettingsService(BaseService):
                 settings_dict["delivery_zones"] = json.loads(settings_dict["delivery_zones"])
             except (json.JSONDecodeError, TypeError):
                 settings_dict["delivery_zones"] = None
-        return _to_jsonable_dict(settings_dict)
-    
+        if settings_dict.get("delivery_slot_times"):
+            try:
+                settings_dict["delivery_slot_times"] = json.loads(settings_dict["delivery_slot_times"])
+            except (json.JSONDecodeError, TypeError):
+                settings_dict["delivery_slot_times"] = []
+        else:
+            settings_dict["delivery_slot_times"] = []
+        return _to_jsonable_dict(_enrich_delivery_dict(settings_dict))
+
     async def create_or_update_delivery_settings(
         self,
         data: DeliverySettingCreateRequest | DeliverySettingUpdateRequest,
@@ -75,10 +100,25 @@ class DeliverySettingsService(BaseService):
         """Create or update delivery settings (singleton). Returns a JSON-serializable dict."""
         logger.info("Creating/updating delivery settings")
         settings_data = data.model_dump(exclude_unset=True)
-        
+        settings_data = _map_delivery_aliases_in(settings_data)
+
         # Convert delivery_zones to JSON string if present
         if "delivery_zones" in settings_data and settings_data["delivery_zones"]:
             settings_data["delivery_zones"] = json.dumps(settings_data["delivery_zones"])
+        if "delivery_slot_times" in settings_data and settings_data["delivery_slot_times"] is not None:
+            dst = settings_data["delivery_slot_times"]
+            if isinstance(dst, str):
+                settings_data["delivery_slot_times"] = dst
+            else:
+                rows = []
+                for w in dst or []:
+                    if hasattr(w, "model_dump"):
+                        rows.append(w.model_dump())
+                    elif isinstance(w, dict):
+                        rows.append(w)
+                    else:
+                        rows.append(dict(w))
+                settings_data["delivery_slot_times"] = json.dumps(rows)
         
         if isinstance(data, DeliverySettingCreateRequest):
             settings_data["is_active"] = True
@@ -95,4 +135,11 @@ class DeliverySettingsService(BaseService):
                 settings_dict["delivery_zones"] = json.loads(settings_dict["delivery_zones"])
             except (json.JSONDecodeError, TypeError):
                 settings_dict["delivery_zones"] = None
-        return _to_jsonable_dict(settings_dict)
+        if settings_dict.get("delivery_slot_times"):
+            try:
+                settings_dict["delivery_slot_times"] = json.loads(settings_dict["delivery_slot_times"])
+            except (json.JSONDecodeError, TypeError):
+                settings_dict["delivery_slot_times"] = []
+        else:
+            settings_dict["delivery_slot_times"] = []
+        return _to_jsonable_dict(_enrich_delivery_dict(settings_dict))

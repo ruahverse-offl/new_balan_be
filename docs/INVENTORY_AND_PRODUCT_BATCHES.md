@@ -1,5 +1,7 @@
 # Inventory and Product Batches — What They Are and How They Help the Admin
 
+> **Note:** The **Product Batches** admin screen and `/api/v1/product-batches` REST API were removed. Batch rows still live in the database and are used internally for order fulfilment (FEFO, stock decrements).
+
 This doc explains **Product Batches** and **Inventory (Inventory Transactions)** in the pharmacy system, and how they help the admin run the shop.
 
 ---
@@ -21,8 +23,8 @@ A **Product Batch** is one physical lot of a medicine brand that you have in sto
 - You need to track **which lot** was sold (for recalls, audits, expiry).  
 - Stock is tracked **per batch**; total stock for a product = sum of all its batches’ `quantity_available`.
 
-**Where the admin uses it:**  
-- **Admin → Product Batches:** Create, edit, delete batches (add new stock, set batch number, expiry, purchase price, quantity).  
+**Where it is maintained:**  
+- Batch data is loaded via **database seeding / scripts** (no dedicated admin CRUD for batches).  
 - When you **approve an order**, the system automatically picks a batch (FEFO), reduces its `quantity_available`, and links that batch to the order line.
 
 ---
@@ -83,7 +85,7 @@ So:
 | **Know what’s in stock** | Product Batches show `quantity_available` per batch; dashboard can show total stock per product and value (quantity × purchase_price). |
 | **Avoid selling expired medicine** | Batches have **expiry_date**; order approval uses **FEFO** (first expiry, first out). Inventory dashboard can show **expiring soon** and **expired** alerts. |
 | **Trace which batch was sold** | Each order item can store **product_batch_id**; inventory has SALE transactions with **reference_order_id**. So you can trace a sale back to batch and order. |
-| **Record new stock (purchases)** | Add a new **Product Batch** or an **Inventory Transaction** (PURCHASE) so batch quantity and history are correct. |
+| **Record new stock (purchases)** | Insert or update **`product_batches`** rows (seed/DB) or use **Inventory Transaction** (PURCHASE) where applicable so batch quantity and history stay correct. |
 | **Adjust stock (damage, count correction)** | Use **Inventory** with transaction type like ADJUSTMENT_IN / ADJUSTMENT_OUT; batch quantity is updated and the change is logged. |
 | **See value of stock** | Inventory dashboard uses batches (quantity_available × purchase_price) to show **total stock value**, top products by value, etc. |
 | **Low stock / out of stock** | Dashboard can compare batch quantities to thresholds and show **low stock** and **out of stock** alerts so admin can reorder. |
@@ -95,4 +97,4 @@ So:
 
 - **Product Batches** = “How much of each lot do I have?” (batch number, expiry, cost, quantity).  
 - **Inventory (transactions)** = “How did stock change?” (purchases, sales, adjustments, linked to batch and optionally to order).  
-- **Admin** uses Batches to manage current stock and expiry, and Inventory to record and review all movements; when orders are approved, the system uses batches (FEFO) and writes SALE transactions so stock and history stay correct and traceable.
+- **Product batch** rows hold current stock and expiry; **inventory transactions** record movements. There is no Product Batches admin UI; when orders are approved, the system uses batches (FEFO) and writes SALE transactions so stock and history stay correct and traceable.

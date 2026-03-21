@@ -3,14 +3,14 @@ RBAC (Role-Based Access Control) Utilities
 Permission checking dependencies and service for FastAPI
 """
 
-from typing import List, Optional, Callable
+from typing import Any, Callable, Dict, List, Optional
 from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.db_connection import get_db
-from app.db.models import User, Role, Permission, RolePermission
+from app.db.models import User, Role, Permission, RolePermission, MenuTask, RoleTaskGrant
 from app.utils.auth import get_current_user_id
 
 
@@ -59,6 +59,46 @@ class RBACService:
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_sidebar_menu_items(self, user_id: UUID) -> List[Dict[str, Any]]:
+        """
+        Return menu tasks visible in the admin sidebar for this user.
+
+        Rows come from ``role_task_grants`` joined to ``menu_tasks`` for the user's role.
+        Included only when ``show_in_menu`` and ``can_read`` are true and rows are not deleted.
+
+        Returns:
+            List of dicts with keys: code, display_name, sort_order, icon_key (optional).
+        """
+        stmt = (
+            select(
+                MenuTask.code,
+                MenuTask.display_name,
+                MenuTask.sort_order,
+                MenuTask.icon_key,
+            )
+            .join(RoleTaskGrant, RoleTaskGrant.menu_task_id == MenuTask.id)
+            .join(User, User.role_id == RoleTaskGrant.role_id)
+            .where(User.id == user_id)
+            .where(User.is_deleted == False)
+            .where(MenuTask.is_deleted == False)
+            .where(MenuTask.is_active == True)
+            .where(RoleTaskGrant.is_deleted == False)
+            .where(RoleTaskGrant.show_in_menu == True)
+            .where(RoleTaskGrant.can_read == True)
+            .order_by(MenuTask.sort_order.asc(), MenuTask.display_name.asc())
+        )
+        result = await self.session.execute(stmt)
+        rows = result.all()
+        return [
+            {
+                "code": r.code,
+                "display_name": r.display_name,
+                "sort_order": r.sort_order,
+                "icon_key": r.icon_key,
+            }
+            for r in rows
+        ]
 
 
 def require_permission(permission_code: str) -> Callable:

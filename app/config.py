@@ -171,6 +171,13 @@ class Settings(BaseSettings):
         default=10485760,  # 10MB in bytes
         description="Maximum upload file size in bytes"
     )
+
+    # ==================== Inventory / low-stock alerts ====================
+    INV_STOCK_THRESHOLD: int = Field(
+        default=10,
+        ge=0,
+        description="When on-hand stock for a medicine+brand (offering) falls below this count, an inventory alert is raised; refills at or above this level remove the alert.",
+    )
     
     
     @field_validator("LOG_LEVEL")

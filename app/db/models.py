@@ -1,24 +1,24 @@
 """
 SQLAlchemy Database Models
-Base models and table definitions
+Base models and table definitions.
+
+Naming: master tables use prefix ``M_``, transaction tables use prefix ``T_``.
 """
 
-from sqlalchemy import Column, String, Boolean, Text, Integer, Date, Numeric, ForeignKey, DateTime
+from sqlalchemy import Column, String, Boolean, Text, Integer, Date, Numeric, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import text
-from sqlalchemy.orm import relationship
 from datetime import timezone, timedelta
 from app.db.db_connection import Base
 
-# IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
 class BaseModel(Base):
     """Base model with audit fields for all tables."""
-    
+
     __abstract__ = True
-    
+
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     created_by = Column(UUID(as_uuid=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("timezone('Asia/Kolkata', now())"))
@@ -31,198 +31,163 @@ class BaseModel(Base):
 
 class MasterModel(BaseModel):
     """Base model for master tables with is_active field."""
-    
+
     __abstract__ = True
-    
+
     is_active = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
 
-# Master Tables
 class Role(MasterModel):
-    """Roles table model."""
-    
-    __tablename__ = "roles"
-    
+    __tablename__ = "M_roles"
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
 
 
 class Permission(MasterModel):
-    """Permissions table model."""
-    
-    __tablename__ = "permissions"
-    
+    __tablename__ = "M_permissions"
     code = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
 
 
 class RolePermission(MasterModel):
-    """Role Permissions table model."""
-    
-    __tablename__ = "role_permissions"
-    
-    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False)
-    permission_id = Column(UUID(as_uuid=True), ForeignKey("permissions.id"), nullable=False)
+    __tablename__ = "M_role_permissions"
+    role_id = Column(UUID(as_uuid=True), ForeignKey("M_roles.id"), nullable=False)
+    permission_id = Column(UUID(as_uuid=True), ForeignKey("M_permissions.id"), nullable=False)
+
+
+class MenuTask(MasterModel):
+    """
+    Admin UI task (screen) — one row per sidebar destination.
+
+    ``code`` matches the frontend admin tab id (e.g. medicines, therapeutic-categories).
+    """
+
+    __tablename__ = "M_menu_tasks"
+
+    code = Column(String(100), nullable=False, unique=True)
+    display_name = Column(String(255), nullable=False)
+    sort_order = Column(Integer, nullable=False, server_default=text("0"))
+    icon_key = Column(String(100), nullable=True)
+
+
+class RoleTaskGrant(BaseModel):
+    """
+    Per-role grants for a menu task: CRUD flags and whether the task appears in the sidebar.
+
+    Sidebar entries are returned only when ``show_in_menu`` and ``can_read`` are true.
+    """
+
+    __tablename__ = "M_role_task_grants"
+
+    role_id = Column(UUID(as_uuid=True), ForeignKey("M_roles.id"), nullable=False)
+    menu_task_id = Column(UUID(as_uuid=True), ForeignKey("M_menu_tasks.id"), nullable=False)
+    can_create = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    can_read = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    can_update = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    can_delete = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    show_in_menu = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+    __table_args__ = (
+        UniqueConstraint("role_id", "menu_task_id", name="uq_m_role_task_grants_role_task"),
+    )
 
 
 class User(MasterModel):
-    """Users table model."""
-    
-    __tablename__ = "users"
-    
-    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id"), nullable=False)
+    __tablename__ = "M_users"
+    role_id = Column(UUID(as_uuid=True), ForeignKey("M_roles.id"), nullable=False)
     full_name = Column(String(255), nullable=False)
     mobile_number = Column(String(15), nullable=False)
     email = Column(String(255), nullable=False)
     password_hash = Column(Text, nullable=False)
 
 
-class PharmacistProfile(MasterModel):
-    """Pharmacist Profiles table model."""
-    
-    __tablename__ = "pharmacist_profiles"
-    
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True)
-    license_number = Column(String(100), nullable=False)
-    license_valid_till = Column(Date, nullable=False)
+class MedicineCategory(MasterModel):
+    """Medicine category (formerly therapeutic category)."""
 
+    __tablename__ = "M_medicine_categories"
 
-class TherapeuticCategory(MasterModel):
-    """Therapeutic Categories table model."""
-    
-    __tablename__ = "therapeutic_categories"
-    
     name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+
+
+class Brand(MasterModel):
+    """Shared master brand (e.g. trade name / line)."""
+
+    __tablename__ = "M_brands"
+
+    name = Column(String(255), nullable=False, unique=True)
     description = Column(Text, nullable=True)
 
 
 class Medicine(MasterModel):
-    """Medicines table model."""
-    
-    __tablename__ = "medicines"
-    
+    """Medicine catalog row — clinical/parent entity."""
+
+    __tablename__ = "M_medicines"
+
+    medicine_category_id = Column(UUID(as_uuid=True), ForeignKey("M_medicine_categories.id"), nullable=False)
     name = Column(String(255), nullable=False)
-    dosage_form = Column(String(100), nullable=False)
-    therapeutic_category_id = Column(UUID(as_uuid=True), ForeignKey("therapeutic_categories.id"), nullable=False)
     is_prescription_required = Column(Boolean, nullable=False, default=False)
-    is_controlled = Column(Boolean, nullable=False, default=False)
-    schedule_type = Column(String(10), nullable=False)
     description = Column(Text, nullable=True)
     is_available = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
 
-class MedicineComposition(MasterModel):
-    """Medicine Compositions table model."""
-    
-    __tablename__ = "medicine_compositions"
-    
-    medicine_id = Column(UUID(as_uuid=True), ForeignKey("medicines.id"), nullable=False)
-    salt_name = Column(String(255), nullable=False)
-    strength = Column(String(50), nullable=False)
-    unit = Column(String(20), nullable=False)
+class MedicineBrandOffering(MasterModel):
+    """Junction: one medicine + one shared brand, with commercial fields (MRP, manufacturer, etc.)."""
 
+    __tablename__ = "M_medicine_brand_offerings"
 
-class MedicineBrand(MasterModel):
-    """Medicine Brands table model."""
-    
-    __tablename__ = "medicine_brands"
-    
-    medicine_id = Column(UUID(as_uuid=True), ForeignKey("medicines.id"), nullable=False)
-    brand_name = Column(String(255), nullable=False)
+    __table_args__ = (UniqueConstraint("medicine_id", "brand_id", name="uq_m_medicine_brand_offerings_pair"),)
+
+    medicine_id = Column(UUID(as_uuid=True), ForeignKey("M_medicines.id"), nullable=False)
+    brand_id = Column(UUID(as_uuid=True), ForeignKey("M_brands.id"), nullable=False)
     manufacturer = Column(String(255), nullable=False)
     mrp = Column(Numeric(10, 2), nullable=False)
     description = Column(Text, nullable=True)
     is_available = Column(Boolean, nullable=False, default=True, server_default=text("true"))
 
 
-# Transaction Tables
-class ProductBatch(BaseModel):
-    """Product Batches table model."""
-    
-    __tablename__ = "product_batches"
-    
-    medicine_brand_id = Column(UUID(as_uuid=True), ForeignKey("medicine_brands.id"), nullable=False)
-    batch_number = Column(String(100), nullable=False)
-    expiry_date = Column(Date, nullable=False)
-    purchase_price = Column(Numeric(10, 2), nullable=False)
-    quantity_available = Column(Integer, nullable=False)
-
-
-class InventoryTransaction(BaseModel):
-    """Inventory Transactions table model."""
-    
-    __tablename__ = "inventory_transactions"
-    
-    medicine_brand_id = Column(UUID(as_uuid=True), ForeignKey("medicine_brands.id"), nullable=False)
-    product_batch_id = Column(UUID(as_uuid=True), ForeignKey("product_batches.id"), nullable=False)
-    transaction_type = Column(String(50), nullable=False)
-    quantity_change = Column(Integer, nullable=False)
-    reference_order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=True)
-    remarks = Column(Text, nullable=True)
-
-
 class Order(BaseModel):
-    """Orders table model.
-    id = UUID (primary key, for DB and APIs).
-    order_reference = human-readable order id: date_time_username (e.g. 20250308_073015_john_doe).
-    """
-    
-    __tablename__ = "orders"
-    
+    __tablename__ = "T_orders"
+
     order_reference = Column(String(100), unique=True, nullable=True, index=True)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=True)
     customer_name = Column(String(255), nullable=True)
     customer_phone = Column(String(15), nullable=False)
     customer_email = Column(String(255), nullable=True)
     delivery_address = Column(Text, nullable=False)
     pincode = Column(String(10), nullable=True)
     city = Column(String(100), nullable=True)
-    order_source = Column(String(50), nullable=False)
     order_status = Column(String(50), nullable=False)
-    approval_status = Column(String(50), nullable=False)
     total_amount = Column(Numeric(10, 2), nullable=False)
     discount_amount = Column(Numeric(10, 2), nullable=False, default=0)
     delivery_fee = Column(Numeric(10, 2), nullable=False, default=0)
     final_amount = Column(Numeric(10, 2), nullable=False)
     payment_method = Column(String(50), nullable=False)
     payment_completed_at = Column(DateTime(timezone=True), nullable=True)
-    prescription_id = Column(String(100), nullable=True)
-    processed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    processed_by = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=True)
     notes = Column(Text, nullable=True)
+    prescription_path = Column(Text, nullable=True)
 
 
 class Payment(BaseModel):
-    """Payments table model — tracks every payment transaction end-to-end."""
+    __tablename__ = "T_payments"
 
-    __tablename__ = "payments"
-
-    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("T_orders.id"), nullable=False)
     payment_method = Column(String(50), nullable=False)
-    payment_status = Column(String(50), nullable=False)  # INITIATED / PENDING / SUCCESS / FAILED
+    payment_status = Column(String(50), nullable=False)
     amount = Column(Numeric(10, 2), nullable=False)
-
-    # Gateway transaction tracking (Razorpay: order_id, payment_id)
-    merchant_transaction_id = Column(String(100), nullable=True)   # Our receipt/order ref
-    gateway_transaction_id = Column(String(100), nullable=True)   # Razorpay payment_id
-    gateway_order_id = Column(String(100), nullable=True)         # Razorpay order_id
-    gateway_response = Column(Text, nullable=True)                 # Full JSON response for audit
-    payment_date = Column(DateTime(timezone=True), nullable=True)  # When payment completed
-
-    # Refund tracking
-    refund_status = Column(String(50), nullable=False, default="NONE")  # NONE / INITIATED / COMPLETED / FAILED
+    merchant_transaction_id = Column(String(100), nullable=True)
+    gateway_transaction_id = Column(String(100), nullable=True)
+    gateway_order_id = Column(String(100), nullable=True)
+    gateway_response = Column(Text, nullable=True)
+    payment_date = Column(DateTime(timezone=True), nullable=True)
+    refund_status = Column(String(50), nullable=False, default="NONE")
     refund_amount = Column(Numeric(10, 2), nullable=False, default=0)
     refund_transaction_id = Column(String(100), nullable=True)
 
 
-# ============================================
-# CLINIC & POLYCLINIC MODULE
-# ============================================
-
 class Doctor(MasterModel):
-    """Doctors table model."""
-    
-    __tablename__ = "doctors"
-    
+    __tablename__ = "M_doctors"
     name = Column(String(255), nullable=False)
     specialty = Column(String(255), nullable=False)
     qualifications = Column(Text, nullable=True)
@@ -233,11 +198,8 @@ class Doctor(MasterModel):
 
 
 class Appointment(BaseModel):
-    """Appointments table model."""
-    
-    __tablename__ = "appointments"
-    
-    doctor_id = Column(UUID(as_uuid=True), ForeignKey("doctors.id"), nullable=True)  # nullable for legacy rows; new rows should set it
+    __tablename__ = "T_appointments"
+    doctor_id = Column(UUID(as_uuid=True), ForeignKey("M_doctors.id"), nullable=True)
     patient_name = Column(String(255), nullable=False)
     patient_phone = Column(String(15), nullable=False)
     appointment_date = Column(Date, nullable=False)
@@ -248,10 +210,7 @@ class Appointment(BaseModel):
 
 
 class PolyclinicTest(MasterModel):
-    """Polyclinic Tests table model."""
-    
-    __tablename__ = "polyclinic_tests"
-    
+    __tablename__ = "M_polyclinic_tests"
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     price = Column(Numeric(10, 2), nullable=False)
@@ -261,11 +220,8 @@ class PolyclinicTest(MasterModel):
 
 
 class TestBooking(BaseModel):
-    """Test Bookings table model."""
-    
-    __tablename__ = "test_bookings"
-    
-    test_id = Column(UUID(as_uuid=True), ForeignKey("polyclinic_tests.id"), nullable=False)
+    __tablename__ = "T_test_bookings"
+    test_id = Column(UUID(as_uuid=True), ForeignKey("M_polyclinic_tests.id"), nullable=False)
     patient_name = Column(String(255), nullable=False)
     patient_phone = Column(String(15), nullable=False)
     booking_date = Column(Date, nullable=False)
@@ -274,39 +230,8 @@ class TestBooking(BaseModel):
     notes = Column(Text, nullable=True)
 
 
-class InsuranceEnquiry(BaseModel):
-    """Insurance Enquiries table model."""
-
-    __tablename__ = "insurance_enquiries"
-
-    customer_name = Column(String(255), nullable=False)
-    customer_phone = Column(String(15), nullable=False)
-    customer_age = Column(Integer, nullable=True)
-    family_size = Column(Integer, nullable=True)
-    plan_type = Column(String(100), nullable=True)
-    message = Column(Text, nullable=True)
-    status = Column(String(50), nullable=False, default="PENDING")
-    admin_notes = Column(Text, nullable=True)
-
-
-# ============================================
-# PHARMACY MODULE - ADDITIONAL
-# ============================================
-
-class ProductCategory(MasterModel):
-    """Product Categories table model."""
-    
-    __tablename__ = "product_categories"
-    
-    name = Column(String(100), nullable=False)
-    description = Column(Text, nullable=True)
-
-
 class Coupon(MasterModel):
-    """Coupons table model."""
-    
-    __tablename__ = "coupons"
-    
+    __tablename__ = "M_coupons"
     code = Column(String(50), nullable=False, unique=True)
     discount_percentage = Column(Numeric(5, 2), nullable=False)
     expiry_date = Column(Date, nullable=True)
@@ -318,18 +243,11 @@ class Coupon(MasterModel):
 
 
 class CouponUsage(BaseModel):
-    """Coupon Usages table model.
-    Stores a snapshot of coupon usage at order time: coupon code, customer, phone, order total.
-    These snapshot columns ensure we can display full usage details even if coupon/order is later deleted.
-    """
-    
-    __tablename__ = "coupon_usages"
-    
-    coupon_id = Column(UUID(as_uuid=True), ForeignKey("coupons.id"), nullable=False)
-    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    __tablename__ = "T_coupon_usages"
+    coupon_id = Column(UUID(as_uuid=True), ForeignKey("M_coupons.id"), nullable=False)
+    order_id = Column(UUID(as_uuid=True), ForeignKey("T_orders.id"), nullable=False)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=True)
     discount_amount = Column(Numeric(10, 2), nullable=False)
-    # Snapshot fields — stored at order time so Coupon Usages page always has full data
     coupon_code = Column(String(50), nullable=True)
     customer_name = Column(String(255), nullable=True)
     customer_phone = Column(String(15), nullable=True)
@@ -337,75 +255,32 @@ class CouponUsage(BaseModel):
 
 
 class DeliverySetting(MasterModel):
-    """Delivery Settings table model (Singleton)."""
-    
-    __tablename__ = "delivery_settings"
-    
+    __tablename__ = "M_delivery_settings"
     is_enabled = Column(Boolean, nullable=False, default=True)
     min_order_amount = Column(Numeric(10, 2), nullable=False)
     delivery_fee = Column(Numeric(10, 2), nullable=False)
     free_delivery_threshold = Column(Numeric(10, 2), nullable=False)
-    delivery_zones = Column(Text, nullable=True)  # JSON stored as TEXT (PostgreSQL JSONB not available in all versions)
+    free_delivery_max_amount = Column(Numeric(10, 2), nullable=True)
+    delivery_zones = Column(Text, nullable=True)
     show_marquee = Column(Boolean, nullable=False, default=True)
+    delivery_slot_times = Column(Text, nullable=True)
 
-
-class DeliverySlot(MasterModel):
-    """Delivery Slots table model."""
-    
-    __tablename__ = "delivery_slots"
-    
-    delivery_settings_id = Column(UUID(as_uuid=True), ForeignKey("delivery_settings.id"), nullable=False)
-    slot_time = Column(String(100), nullable=False)
-    slot_order = Column(Integer, nullable=False)
-
-
-# ============================================
-# ORDERS ENHANCEMENT
-# ============================================
 
 class OrderItem(BaseModel):
-    """Order Items table model."""
-    
-    __tablename__ = "order_items"
-    
-    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
-    medicine_brand_id = Column(UUID(as_uuid=True), ForeignKey("medicine_brands.id"), nullable=False)
+    __tablename__ = "T_order_items"
+    order_id = Column(UUID(as_uuid=True), ForeignKey("T_orders.id"), nullable=False)
+    medicine_brand_id = Column(UUID(as_uuid=True), ForeignKey("M_medicine_brand_offerings.id"), nullable=False)
     medicine_name = Column(String(255), nullable=True)
     brand_name = Column(String(255), nullable=True)
     quantity = Column(Integer, nullable=False)
     unit_price = Column(Numeric(10, 2), nullable=False)
     total_price = Column(Numeric(10, 2), nullable=False)
     requires_prescription = Column(Boolean, nullable=False, default=False)
-    product_batch_id = Column(UUID(as_uuid=True), ForeignKey("product_batches.id"), nullable=True)
-
-
-# ============================================
-# PRESCRIPTIONS MODULE
-# ============================================
-
-class Prescription(BaseModel):
-    """Prescriptions table model."""
-
-    __tablename__ = "prescriptions"
-
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=True)
-    file_url = Column(Text, nullable=False)
-    file_name = Column(String(255), nullable=False)
-    file_size = Column(Integer, nullable=False)
-    file_type = Column(String(100), nullable=False)
-    status = Column(String(50), nullable=False, default="PENDING")
-    reviewed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    review_notes = Column(Text, nullable=True)
-    rejection_reason = Column(Text, nullable=True)
 
 
 class Address(MasterModel):
-    """User Addresses table model."""
-
-    __tablename__ = "addresses"
-
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    __tablename__ = "M_addresses"
+    user_id = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=False)
     label = Column(String(50), nullable=True)
     street = Column(Text, nullable=False)
     city = Column(String(100), nullable=False)
@@ -413,3 +288,37 @@ class Address(MasterModel):
     pincode = Column(String(10), nullable=False)
     country = Column(String(100), nullable=False, default="India")
     is_default = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+
+
+class Inventory(MasterModel):
+    """On-hand units per medicine–brand offering (SKU)."""
+
+    __tablename__ = "M_inventory"
+
+    __table_args__ = (
+        UniqueConstraint("medicine_brand_offering_id", name="uq_m_inventory_offering"),
+    )
+
+    medicine_brand_offering_id = Column(
+        UUID(as_uuid=True), ForeignKey("M_medicine_brand_offerings.id"), nullable=False, index=True
+    )
+    stock_quantity = Column(Integer, nullable=False, server_default=text("0"))
+
+
+class InventoryAlert(BaseModel):
+    """
+    Active low-stock signal for an offering.
+
+    Rows are removed when stock is refilled to at or above ``INV_STOCK_THRESHOLD``.
+    """
+
+    __tablename__ = "T_inventory_alerts"
+
+    __table_args__ = (
+        UniqueConstraint("medicine_brand_offering_id", name="uq_t_inventory_alerts_offering"),
+    )
+
+    medicine_brand_offering_id = Column(
+        UUID(as_uuid=True), ForeignKey("M_medicine_brand_offerings.id"), nullable=False, index=True
+    )
+    current_stock = Column(Integer, nullable=False)

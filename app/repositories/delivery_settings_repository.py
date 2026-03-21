@@ -18,6 +18,7 @@ _DELIVERY_SETTINGS_CREATE_DEFAULTS = {
     "min_order_amount": Decimal("0"),
     "delivery_fee": Decimal("40"),
     "free_delivery_threshold": Decimal("500"),
+    "free_delivery_max_amount": None,
     "show_marquee": True,
     "is_active": True,
 }

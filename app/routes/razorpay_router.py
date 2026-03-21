@@ -5,7 +5,7 @@ Handles payment initiation, verification, status check, and refunds.
 
 import json
 import logging
-from typing import Optional, List
+from typing import List, Optional
 from uuid import UUID, uuid4
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
@@ -16,7 +16,17 @@ from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.db_connection import get_db
-from app.db.models import Order, OrderItem, Payment, Coupon, CouponUsage, MedicineBrand, Medicine, User, Prescription
+from app.db.models import (
+    Order,
+    OrderItem,
+    Payment,
+    Coupon,
+    CouponUsage,
+    MedicineBrandOffering,
+    Brand,
+    Medicine,
+    User,
+)
 from app.utils.auth import get_current_user_id
 from app.utils.rbac import require_permission
 from app.utils.request_utils import get_client_ip
@@ -27,8 +37,9 @@ from app.services.razorpay_service import (
     fetch_payment,
     process_refund,
 )
-from app.db.models import DeliverySetting, DeliverySlot
-from app.utils.delivery_windows import is_now_within_any_slot
+from app.services import inventory_service
+from app.db.models import DeliverySetting
+from app.utils.delivery_pricing import delivery_fee_for_subtotal
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +69,29 @@ IST = timezone(timedelta(hours=5, minutes=30))
 router = APIRouter(prefix="/api/v1/razorpay", tags=["razorpay-payments"])
 
 
+async def _resolve_offering_for_order_item(
+    db: AsyncSession, offering_uuid: UUID
+):
+    """
+    Load medicine_brand_offering (cart id) with medicine name and brand display name.
+    Returns (medicine_name, brand_display_name) or (None, None) if not found.
+    """
+    stmt = (
+        select(Medicine.name, Brand.name)
+        .select_from(MedicineBrandOffering)
+        .join(Medicine, MedicineBrandOffering.medicine_id == Medicine.id)
+        .join(Brand, MedicineBrandOffering.brand_id == Brand.id)
+        .where(
+            MedicineBrandOffering.id == offering_uuid,
+            MedicineBrandOffering.is_deleted == False,  # noqa: E712
+        )
+    )
+    row = (await db.execute(stmt)).first()
+    if not row:
+        return None, None
+    return row[0], row[1]
+
+
 # ─── Request / Response Schemas ───
 
 
@@ -67,6 +101,29 @@ class CartItemSchema(BaseModel):
     quantity: int = Field(ge=1)
     price: float = Field(ge=0)
     requires_prescription: bool = False
+
+
+def _offering_qty_from_cart_items(items: List[CartItemSchema]) -> List[tuple[UUID, int]]:
+    """Parse medicine_brand_offering UUID and quantity from each cart line."""
+    out: List[tuple[UUID, int]] = []
+    for item in items:
+        brand_id = item.medicine_brand_id
+        if brand_id and "_" in brand_id:
+            brand_id = brand_id.split("_")[-1]
+        if not brand_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Missing medicine_brand_id for item: {item.name}",
+            )
+        try:
+            brand_uuid = UUID(brand_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid medicine_brand_id for item: {item.name}",
+            )
+        out.append((brand_uuid, item.quantity))
+    return out
 
 
 class AppliedCouponSchema(BaseModel):
@@ -88,7 +145,6 @@ class PaymentInitiateRequest(BaseModel):
     final_amount: float = Field(gt=0)
     coupon_code: Optional[str] = None
     applied_coupons: Optional[List[AppliedCouponSchema]] = Field(None, description="Multiple coupons; discount_amount must equal sum of their discount_amount")
-    prescription_id: Optional[str] = None
 
 
 class PaymentInitiateResponse(BaseModel):
@@ -138,6 +194,37 @@ class MockCompleteRequest(BaseModel):
 # ─── Endpoints ───
 
 
+async def _fetch_active_delivery_settings(db: AsyncSession):
+    ds_row = await db.execute(
+        select(DeliverySetting)
+        .where(DeliverySetting.is_deleted == False)
+        .where(DeliverySetting.is_active == True)
+        .order_by(DeliverySetting.created_at.desc())
+    )
+    return ds_row.scalars().first()
+
+
+def _validate_checkout_amounts(data: PaymentInitiateRequest, ds: Optional[DeliverySetting]) -> None:
+    """Ensure delivery fee and final amount match server rules (free-delivery band + delivery fee)."""
+    if ds is not None and ds.is_enabled is False:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Delivery is currently turned off.")
+    sub = Decimal(str(data.subtotal))
+    expected_fee = delivery_fee_for_subtotal(sub, ds)
+    got_fee = Decimal(str(data.delivery_fee))
+    if abs(got_fee - expected_fee) > Decimal("0.02"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid delivery_fee: expected {float(expected_fee)}, got {data.delivery_fee}",
+        )
+    expected_final = (sub + expected_fee - Decimal(str(data.discount_amount))).quantize(Decimal("0.01"))
+    got_final = Decimal(str(data.final_amount)).quantize(Decimal("0.01"))
+    if abs(expected_final - got_final) > Decimal("0.02"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Amount mismatch: expected final_amount {float(expected_final)}, got {data.final_amount}",
+        )
+
+
 @router.post("/initiate", response_model=PaymentInitiateResponse)
 async def initiate_razorpay_payment(
     data: PaymentInitiateRequest,
@@ -156,42 +243,8 @@ async def initiate_razorpay_payment(
         )
     ip_address = get_client_ip(request)
 
-    # Enforce delivery windows server-side (IST-based slots)
-    ds_row = await db.execute(
-        select(DeliverySetting)
-        .where(DeliverySetting.is_deleted == False)
-        .where(DeliverySetting.is_active == True)
-        .order_by(DeliverySetting.created_at.desc())
-    )
-    ds = ds_row.scalars().first()
-    if ds and ds.is_enabled is False:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Delivery is currently turned off.")
-    if ds:
-        slots_row = await db.execute(
-            select(DeliverySlot.slot_time)
-            .where(DeliverySlot.delivery_settings_id == ds.id)
-            .where(DeliverySlot.is_deleted == False)
-            .where(DeliverySlot.is_active == True)
-            .order_by(DeliverySlot.slot_order.asc())
-        )
-        slot_times = [r[0] for r in slots_row.all() if r and r[0]]
-        if not slot_times:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Orders cannot be placed because no active delivery time windows are configured.",
-            )
-        if not is_now_within_any_slot(slot_times):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Orders can only be placed during active delivery time windows (IST): " + ", ".join(slot_times),
-            )
-
-    expected_final = round(data.subtotal + data.delivery_fee - data.discount_amount, 2)
-    if abs(expected_final - data.final_amount) > 0.01:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Amount mismatch: expected {expected_final}, got final_amount={data.final_amount}",
-        )
+    ds = await _fetch_active_delivery_settings(db)
+    _validate_checkout_amounts(data, ds)
 
     phone_digits = "".join(c for c in data.customer_phone if c.isdigit())
     if len(phone_digits) < 10:
@@ -201,6 +254,9 @@ async def initiate_razorpay_payment(
         )
 
     try:
+        oq = _offering_qty_from_cart_items(data.items)
+        await inventory_service.validate_cart_stock(db, oq, current_user_id, ip_address)
+
         # Resolve username for order_reference (date_time_username)
         user_row = await db.execute(
             select(User.full_name).where(User.id == current_user_id, User.is_deleted == False)
@@ -219,15 +275,12 @@ async def initiate_razorpay_payment(
             delivery_address=data.delivery_address,
             pincode=(data.pincode or "").strip() or None,
             city=(data.city or "").strip() or None,
-            order_source="ONLINE",
             order_status="PENDING",
-            approval_status="PENDING",
             total_amount=Decimal(str(data.subtotal)),
             discount_amount=Decimal(str(data.discount_amount)),
             delivery_fee=Decimal(str(data.delivery_fee)),
             final_amount=Decimal(str(data.final_amount)),
             payment_method="RAZORPAY",
-            prescription_id=data.prescription_id,
             notes="Coupons: " + ", ".join(ac.code for ac in data.applied_coupons) if data.applied_coupons else (f"Coupon: {data.coupon_code}" if data.coupon_code else None),
             created_by=current_user_id,
             created_ip=ip_address,
@@ -252,16 +305,9 @@ async def initiate_razorpay_payment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid medicine_brand_id for item: {item.name}",
                 )
-            brand_stmt = select(MedicineBrand, Medicine).join(
-                Medicine, MedicineBrand.medicine_id == Medicine.id
-            ).where(
-                MedicineBrand.id == brand_uuid,
-                MedicineBrand.is_deleted == False,
-            )
-            brand_row = await db.execute(brand_stmt)
-            brand_med = brand_row.first()
-            medicine_name_val = brand_med[1].name if brand_med else None
-            brand_name_val = brand_med[0].brand_name if brand_med else item.name
+            medicine_name_val, brand_name_val = await _resolve_offering_for_order_item(db, brand_uuid)
+            if brand_name_val is None and medicine_name_val is None:
+                brand_name_val = item.name
 
             order_item = OrderItem(
                 order_id=order.id,
@@ -278,17 +324,6 @@ async def initiate_razorpay_payment(
             db.add(order_item)
 
         await db.flush()
-
-        # Link prescription to this order when order includes prescription-required items
-        if data.prescription_id and (data.prescription_id or "").strip():
-            try:
-                prescription_uuid = UUID(str(data.prescription_id).strip())
-                await db.execute(
-                    sa_update(Prescription).where(Prescription.id == prescription_uuid).values(order_id=order.id)
-                )
-                await db.flush()
-            except (ValueError, TypeError):
-                pass  # Invalid prescription_id format; order still succeeds
 
         if data.applied_coupons:
             for ac in data.applied_coupons:
@@ -420,42 +455,9 @@ async def mock_initiate_payment(
     """
     ip_address = get_client_ip(request)
 
-    # Enforce delivery windows server-side (IST-based slots)
-    ds_row = await db.execute(
-        select(DeliverySetting)
-        .where(DeliverySetting.is_deleted == False)
-        .where(DeliverySetting.is_active == True)
-        .order_by(DeliverySetting.created_at.desc())
-    )
-    ds = ds_row.scalars().first()
-    if ds and ds.is_enabled is False:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Delivery is currently turned off.")
-    if ds:
-        slots_row = await db.execute(
-            select(DeliverySlot.slot_time)
-            .where(DeliverySlot.delivery_settings_id == ds.id)
-            .where(DeliverySlot.is_deleted == False)
-            .where(DeliverySlot.is_active == True)
-            .order_by(DeliverySlot.slot_order.asc())
-        )
-        slot_times = [r[0] for r in slots_row.all() if r and r[0]]
-        if not slot_times:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Orders cannot be placed because no active delivery time windows are configured.",
-            )
-        if not is_now_within_any_slot(slot_times):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Orders can only be placed during active delivery time windows (IST): " + ", ".join(slot_times),
-            )
+    ds = await _fetch_active_delivery_settings(db)
+    _validate_checkout_amounts(data, ds)
 
-    expected_final = round(data.subtotal + data.delivery_fee - data.discount_amount, 2)
-    if abs(expected_final - data.final_amount) > 0.01:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Amount mismatch: expected {expected_final}, got final_amount={data.final_amount}",
-        )
     if data.applied_coupons:
         applied_sum = sum(ac.discount_amount for ac in data.applied_coupons)
         if abs(applied_sum - data.discount_amount) > 0.01:
@@ -470,6 +472,9 @@ async def mock_initiate_payment(
             detail="Invalid phone number. Must be at least 10 digits.",
         )
     try:
+        oq = _offering_qty_from_cart_items(data.items)
+        await inventory_service.validate_cart_stock(db, oq, current_user_id, ip_address)
+
         user_row = await db.execute(
             select(User.full_name).where(User.id == current_user_id, User.is_deleted == False)
         )
@@ -486,15 +491,12 @@ async def mock_initiate_payment(
             delivery_address=data.delivery_address,
             pincode=(data.pincode or "").strip() or None,
             city=(data.city or "").strip() or None,
-            order_source="ONLINE",
             order_status="PENDING",
-            approval_status="PENDING",
             total_amount=Decimal(str(data.subtotal)),
             discount_amount=Decimal(str(data.discount_amount)),
             delivery_fee=Decimal(str(data.delivery_fee)),
             final_amount=Decimal(str(data.final_amount)),
             payment_method="RAZORPAY",
-            prescription_id=data.prescription_id,
             notes="Coupons: " + ", ".join(ac.code for ac in data.applied_coupons) if data.applied_coupons else (f"Coupon: {data.coupon_code}" if data.coupon_code else None),
             created_by=current_user_id,
             created_ip=ip_address,
@@ -518,16 +520,9 @@ async def mock_initiate_payment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid medicine_brand_id for item: {item.name}",
                 )
-            brand_stmt = select(MedicineBrand, Medicine).join(
-                Medicine, MedicineBrand.medicine_id == Medicine.id
-            ).where(
-                MedicineBrand.id == brand_uuid,
-                MedicineBrand.is_deleted == False,
-            )
-            brand_row = await db.execute(brand_stmt)
-            brand_med = brand_row.first()
-            medicine_name_val = brand_med[1].name if brand_med else None
-            brand_name_val = brand_med[0].brand_name if brand_med else item.name
+            medicine_name_val, brand_name_val = await _resolve_offering_for_order_item(db, brand_uuid)
+            if brand_name_val is None and medicine_name_val is None:
+                brand_name_val = item.name
             order_item = OrderItem(
                 order_id=order.id,
                 medicine_brand_id=brand_uuid,
@@ -652,7 +647,7 @@ async def mock_complete_payment(
     payment, order = row
     if order.customer_id and order.customer_id != current_user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not own this order.")
-    if not (payment.gateway_order_id or payment.gateway_order_id.startswith("mock_")):
+    if not payment.gateway_order_id or not str(payment.gateway_order_id).startswith("mock_"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This order is not a mock payment.")
     if payment.payment_status == "SUCCESS":
         return PaymentStatusResponse(
@@ -665,29 +660,37 @@ async def mock_complete_payment(
     ip_address = get_client_ip(request)
     now_ist = datetime.now(IST)
     mock_txn_id = "mock_" + uuid4().hex[:12]
-    await db.execute(
-        sa_update(Payment)
-        .where(Payment.id == payment.id)
-        .values(
-            payment_status="SUCCESS",
-            gateway_transaction_id=mock_txn_id,
-            gateway_response=json.dumps({"mock": True, "completed_at": now_ist.isoformat()}, default=str),
-            payment_date=now_ist,
-            updated_by=current_user_id,
-            updated_ip=ip_address,
+    try:
+        await inventory_service.decrease_stock_for_order(db, order.id, current_user_id, ip_address)
+        await db.execute(
+            sa_update(Payment)
+            .where(Payment.id == payment.id)
+            .values(
+                payment_status="SUCCESS",
+                gateway_transaction_id=mock_txn_id,
+                gateway_response=json.dumps({"mock": True, "completed_at": now_ist.isoformat()}, default=str),
+                payment_date=now_ist,
+                updated_by=current_user_id,
+                updated_ip=ip_address,
+            )
         )
-    )
-    await db.execute(
-        sa_update(Order)
-        .where(Order.id == order.id)
-        .values(
-            order_status="CONFIRMED",
-            payment_completed_at=now_ist,
-            updated_by=current_user_id,
-            updated_ip=ip_address,
+        await db.execute(
+            sa_update(Order)
+            .where(Order.id == order.id)
+            .values(
+                order_status="CONFIRMED",
+                payment_completed_at=now_ist,
+                updated_by=current_user_id,
+                updated_ip=ip_address,
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception:
+        await db.rollback()
+        raise
     logger.info("Mock payment completed — order=%s", order.id)
     return PaymentStatusResponse(
         order_id=str(order.id),
@@ -745,32 +748,40 @@ async def verify_razorpay_payment(
     ip_address = get_client_ip(request)
     now_ist = datetime.now(IST)
 
-    await db.execute(
-        sa_update(Payment)
-        .where(Payment.id == payment.id)
-        .values(
-            payment_status="SUCCESS",
-            gateway_transaction_id=data.razorpay_payment_id,
-            gateway_response=json.dumps(
-                {"razorpay_payment_id": data.razorpay_payment_id, "verified": True},
-                default=str,
-            ),
-            payment_date=now_ist,
-            updated_by=current_user_id,
-            updated_ip=ip_address,
+    try:
+        await inventory_service.decrease_stock_for_order(db, order.id, current_user_id, ip_address)
+        await db.execute(
+            sa_update(Payment)
+            .where(Payment.id == payment.id)
+            .values(
+                payment_status="SUCCESS",
+                gateway_transaction_id=data.razorpay_payment_id,
+                gateway_response=json.dumps(
+                    {"razorpay_payment_id": data.razorpay_payment_id, "verified": True},
+                    default=str,
+                ),
+                payment_date=now_ist,
+                updated_by=current_user_id,
+                updated_ip=ip_address,
+            )
         )
-    )
-    await db.execute(
-        sa_update(Order)
-        .where(Order.id == order.id)
-        .values(
-            order_status="CONFIRMED",
-            payment_completed_at=now_ist,
-            updated_by=current_user_id,
-            updated_ip=ip_address,
+        await db.execute(
+            sa_update(Order)
+            .where(Order.id == order.id)
+            .values(
+                order_status="CONFIRMED",
+                payment_completed_at=now_ist,
+                updated_by=current_user_id,
+                updated_ip=ip_address,
+            )
         )
-    )
-    await db.commit()
+        await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception:
+        await db.rollback()
+        raise
 
     logger.info("Razorpay payment verified — order=%s, payment_id=%s", order.id, data.razorpay_payment_id)
 

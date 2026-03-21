@@ -475,23 +475,6 @@ database:
     # PHARMACY MODULE - ADDITIONAL
     # ============================================
 
-    product_categories:
-      type: master
-      fields:
-        id:
-          type: UUID
-          example: "pc1..."
-        name:
-          type: VARCHAR(100)
-          example: "OTC"
-          # Values: OTC, Prescription, Daily Care, Wellness, etc.
-        description:
-          type: TEXT
-          example: "Over-the-counter medicines"
-        is_active:
-          type: BOOLEAN
-          example: true
-
     coupons:
       type: master
       fields:

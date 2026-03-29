@@ -32,7 +32,7 @@ class StorageService:
         return await self._save_locally(file, subdirectory)
 
     async def _save_locally(self, file: UploadFile, subdirectory: str) -> dict:
-        """Save file to local filesystem (e.g. ./storage/prescriptions/). No DB blob; no cloud."""
+        """Save file under LOCAL_STORAGE_PATH/<subdirectory>/ (e.g. .../storage/devstorage/prescription/). No DB blob; no cloud."""
         storage_path = Path(self.settings.LOCAL_STORAGE_PATH)
         if subdirectory:
             storage_path = storage_path / subdirectory

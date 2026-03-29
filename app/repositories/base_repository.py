@@ -179,12 +179,16 @@ class BaseRepository(Generic[T]):
         data["updated_ip"] = updated_ip
         
         # Only update keys that are columns on the model (avoid AttributeError from schema extras).
-        # Allow False and 0 (only skip when value is None = "not provided").
+        # Skip None = "omit field"; for nullable columns, explicit None clears the field.
         column_names = {c.name for c in self.model.__table__.columns}
+        columns_by_name = {c.name: c for c in self.model.__table__.columns}
         for key, value in data.items():
             if key not in column_names:
                 continue
             if value is None:
+                col = columns_by_name.get(key)
+                if col is not None and col.nullable:
+                    setattr(instance, key, None)
                 continue
             setattr(instance, key, value)
         

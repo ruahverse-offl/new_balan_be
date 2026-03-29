@@ -17,6 +17,7 @@ from app.schemas.delivery_settings_schema import (
     DeliverySettingUpdateRequest,
 )
 from app.services.base_service import BaseService
+from app.utils.delivery_windows import delivery_schedule_public_meta
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,12 @@ class DeliverySettingsService(BaseService):
                 settings_dict["delivery_slot_times"] = []
         else:
             settings_dict["delivery_slot_times"] = []
-        return _to_jsonable_dict(_enrich_delivery_dict(settings_dict))
+        enriched = _enrich_delivery_dict(settings_dict)
+        enriched["delivery_schedule"] = delivery_schedule_public_meta(
+            bool(enriched.get("is_enabled", True)),
+            enriched.get("delivery_slot_times"),
+        )
+        return _to_jsonable_dict(enriched)
 
     async def create_or_update_delivery_settings(
         self,
@@ -142,4 +148,9 @@ class DeliverySettingsService(BaseService):
                 settings_dict["delivery_slot_times"] = []
         else:
             settings_dict["delivery_slot_times"] = []
-        return _to_jsonable_dict(_enrich_delivery_dict(settings_dict))
+        enriched = _enrich_delivery_dict(settings_dict)
+        enriched["delivery_schedule"] = delivery_schedule_public_meta(
+            bool(enriched.get("is_enabled", True)),
+            enriched.get("delivery_slot_times"),
+        )
+        return _to_jsonable_dict(enriched)

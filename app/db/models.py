@@ -129,6 +129,8 @@ class Medicine(MasterModel):
     is_prescription_required = Column(Boolean, nullable=False, default=False)
     description = Column(Text, nullable=True)
     is_available = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # Relative path under LOCAL_STORAGE_PATH (default …/storage/devstorage), e.g. medicine/uuid.png → served at /storage/medicine/...
+    image_path = Column(String(512), nullable=True)
 
 
 class MedicineBrandOffering(MasterModel):

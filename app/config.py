@@ -6,9 +6,17 @@ All configuration values are read from environment variables with sensible defau
 """
 
 import os
+from pathlib import Path
 from typing import Literal, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator, field_serializer
+
+# Backend project root (directory containing `app/`, `main.py`, etc.)
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+# Shared uploads live OUTSIDE the backend repo: <workspace>/storage/devstorage/
+# e.g. vps-dev/new_balan_be → vps-dev/storage/devstorage/{medicine,prescription,others}
+# Override with LOCAL_STORAGE_PATH in .env (required if you use a different layout).
+_DEFAULT_LOCAL_STORAGE = (_BACKEND_ROOT.parent / "storage" / "devstorage").resolve()
 
 
 class Settings(BaseSettings):
@@ -85,10 +93,11 @@ class Settings(BaseSettings):
         description="Storage backend (local or azure)"
     )
     
-    # Local Storage Settings
+    # Local Storage Settings — uploads go under <LOCAL_STORAGE_PATH>/<category>/
+    # Default: <parent-of-backend>/storage/devstorage (not inside new_balan_be). Categories: medicine, prescription, others.
     LOCAL_STORAGE_PATH: str = Field(
-        default="./storage",
-        description="Local file storage path"
+        default=str(_DEFAULT_LOCAL_STORAGE),
+        description="Root folder for local uploads. Default: ../storage/devstorage relative to backend root.",
     )
     
     # Azure Blob Storage Settings

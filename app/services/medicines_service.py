@@ -186,7 +186,7 @@ class MedicinesService(BaseService):
         updated_ip: str,
     ) -> Optional[MedicineResponse]:
         """Update a medicine. When is_available is False, cascade to all offerings."""
-        update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+        update_data = {k: v for k, v in data.model_dump(exclude_unset=True).items()}
         logger.info(
             "Updating medicine: %s medicine_category_id=%s",
             medicine_id,

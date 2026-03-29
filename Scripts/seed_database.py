@@ -153,6 +153,7 @@ USERS_SPEC = [
 # Admin sidebar tasks (codes match React admin tab ids; icon_key matches ADMIN_SIDEBAR_ICON_MAP)
 MENU_TASKS_SPEC: list[tuple[str, str, int, str | None]] = [
     ("dashboard", "Statistics", 0, "LayoutDashboard"),
+    ("roles-access", "Roles & access", 5, "Shield"),
     ("doctors", "Manage Doctors", 10, "Users"),
     ("medicines", "Manage Medicines", 20, "Pill"),
     ("therapeutic-categories", "Medicine Cat.", 25, "Tags"),
@@ -169,7 +170,7 @@ MENU_TASKS_SPEC: list[tuple[str, str, int, str | None]] = [
 ]
 
 # DEV: dashboard + staff (typical place for user/role tooling); extend if your UI differs
-DEV_MENU_CODES = frozenset({"dashboard", "staff"})
+DEV_MENU_CODES = frozenset({"dashboard", "staff", "roles-access"})
 
 
 async def _truncate_all(session: AsyncSession) -> None:

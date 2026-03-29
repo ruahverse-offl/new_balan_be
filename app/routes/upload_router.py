@@ -1,13 +1,16 @@
 """
 Generic file upload and list API.
-Saves files to LOCAL_STORAGE_PATH (e.g. /app/storage in Docker) under category subdirs.
+Saves files to LOCAL_STORAGE_PATH/<category>/ (default: <workspace>/storage/devstorage/medicine|prescription|others).
 Use for medicine images, prescriptions, and other uploads.
 """
 
 from pathlib import Path
-from fastapi import APIRouter, File, Form, HTTPException, status, UploadFile
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, status, UploadFile
 
 from app.config import get_settings
+from app.utils.auth import get_current_user_id
 from app.utils.storage import StorageService
 
 router = APIRouter(prefix="/api/v1", tags=["upload"])
@@ -20,15 +23,21 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 async def upload_file(
     file: UploadFile = File(...),
     category: str = Form(..., pattern="^(medicine|prescription|others)$"),
+    _user_id: UUID = Depends(get_current_user_id),
 ):
     """
     Upload a file to a category folder (medicine, prescription, others).
-    Returns filename, stored_as (relative path), and url for frontend.
+    Requires JWT. Returns filename, stored_as (relative path), and url for frontend.
     """
     if not (file.content_type and file.content_type.startswith(ALLOWED_CONTENT_PREFIXES)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid file type. Allowed: image/*, application/pdf, text/*",
+        )
+    if category == "medicine" and not (file.content_type and file.content_type.startswith("image/")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Medicine uploads must be images (image/*).",
         )
 
     content = await file.read()

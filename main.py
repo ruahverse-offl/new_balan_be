@@ -13,7 +13,6 @@ from fastapi.staticfiles import StaticFiles
 from app.routes import api_router
 from app.config import get_settings
 from app.db.db_connection import DatabaseConnection
-from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +114,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Include all API routes
 app.include_router(api_router)
 
-# Serve stored files at /storage (e.g. /storage/medicine/xxx.jpg). Use LOCAL_STORAGE_PATH.
-_storage_path = Path(get_settings().LOCAL_STORAGE_PATH)
-if _storage_path.exists():
-    app.mount("/storage", StaticFiles(directory=str(_storage_path)), name="storage")
+# Serve stored files at /storage (e.g. /storage/medicine/xxx.jpg). Files live under LOCAL_STORAGE_PATH (default: ../storage/devstorage from backend root).
+_storage_path = Path(get_settings().LOCAL_STORAGE_PATH).resolve()
+_storage_path.mkdir(parents=True, exist_ok=True)
+app.mount("/storage", StaticFiles(directory=str(_storage_path)), name="storage")

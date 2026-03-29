@@ -76,8 +76,25 @@ CORS_ORIGINS=*
 # Get keys from https://dashboard.razorpay.com
 RAZORPAY_KEY_ID=rzp_test_xxxxxxxx
 RAZORPAY_KEY_SECRET=your_razorpay_key_secret
+
+# Local file storage (medicine images, prescriptions, other uploads)
+# Default: <parent-of-backend>/storage/devstorage (e.g. vps-dev/storage/devstorage — NOT inside new_balan_be)
+STORAGE_BACKEND=local
+# LOCAL_STORAGE_PATH=E:/path/to/storage/devstorage   # optional override
 ```
 
+### Upload storage layout
+
+- **Default path:** the folder **next to** the backend repo: `../storage/devstorage` (resolved to an absolute path at runtime).
+- **Subfolders:** `medicine/`, `prescription/`, `others/` (created automatically on first upload).
+- **Served at:** `GET /storage/<category>/<filename>` (same origin as the API).
+- **Docker:** `docker-compose` mounts `../storage` → `/app/storage` so `LOCAL_STORAGE_PATH=/app/storage/devstorage` matches the host workspace folder.
+- If you previously used `new_balan_be/storage/`, **move** those files into `../storage/devstorage/` under the matching category folders.
+</think>
+
+
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
+Read
 See `.env.example` for the full list. **Razorpay:** Use test keys for development; set live keys in production.
 
 ### Running the Application
@@ -927,21 +944,26 @@ Creates the order, order items, and payment record, then creates a Razorpay orde
   "discount_amount": 0,
   "final_amount": 91.00,
   "coupon_code": null,
-  "prescription_id": null
+  "applied_coupons": null,
+  "prescription_path": null
 }
 ```
+
+When the cart includes prescription-only medicines, set `prescription_path` to the `stored_as` (or `url`) value returned by **POST** `/api/v1/upload` with `category=prescription`.
 
 **Response:** 200 OK
 ```json
 {
   "order_id": "uuid-of-our-order",
+  "order_reference": "20260328_143022_user_a1b2",
   "razorpay_order_id": "order_xxxx",
   "key_id": "rzp_test_xxxx",
-  "amount": 9100
+  "amount": 9100,
+  "razorpay_mode": "test"
 }
 ```
 
-`amount` is in **paise** (₹1 = 100 paise). Frontend uses `key_id`, `razorpay_order_id`, and `amount` with [Razorpay Checkout](https://razorpay.com/docs/payments/payment-gateway/web-integration/checkout/).
+`amount` is in **paise** (₹1 = 100 paise). `razorpay_mode` is `test` when `key_id` starts with `rzp_test_`, otherwise `live`. Frontend uses `key_id`, `razorpay_order_id`, and `amount` with [Razorpay Checkout](https://razorpay.com/docs/payments/payment-gateway/web-integration/checkout/).
 
 #### Verify Payment (after checkout success)
 

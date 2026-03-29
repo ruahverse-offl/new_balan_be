@@ -3,8 +3,8 @@
 # API: http://localhost:8000  |  Docs: http://localhost:8000/docs
 # Ensure backend/.env has DATABASE_URL (e.g. postgresql+asyncpg://newbalanDev:...@148.230.66.113:5432/newbalanDev)
 #
-# Storage: Host dir mounted at /app/storage so FastAPI can read/write files persistently.
-# Local dev: ./storage (create it). On VPS use: /home/newbalan/storage/devstorage:/app/storage
+# Storage: host ../storage (workspace sibling of new_balan_be) → /app/storage
+# Uploads: /app/storage/devstorage/{medicine,prescription,others}. Override LOCAL_STORAGE_PATH in .env if needed.
 
 services:
   backend:
@@ -14,9 +14,9 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://newbalanDev:NewBalan%402025@148.230.66.113:5432/newbalanDev}
-      LOCAL_STORAGE_PATH: /app/storage
+      LOCAL_STORAGE_PATH: /app/storage/devstorage
     volumes:
-      - ./storage:/app/storage
+      - ../storage:/app/storage
     ports:
       - "8000:8000"
     restart: unless-stopped

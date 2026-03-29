@@ -61,3 +61,6 @@ htmlcov/
 # Temporary files
 *.tmp
 *.temp
+
+# Local uploads default to <repo-parent>/storage/devstorage — ignore legacy folder under backend if present
+storage/

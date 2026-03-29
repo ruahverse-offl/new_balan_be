@@ -5,7 +5,7 @@ Handles payment initiation, verification, status check, and refunds.
 
 import json
 import logging
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID, uuid4
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
@@ -40,6 +40,11 @@ from app.services.razorpay_service import (
 from app.services import inventory_service
 from app.db.models import DeliverySetting
 from app.utils.delivery_pricing import delivery_fee_for_subtotal
+from app.utils.delivery_windows import (
+    fulfillment_meta_to_order_note_line,
+    next_delivery_fulfillment_meta,
+    slot_labels_from_parsed_items,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -63,21 +68,51 @@ def _make_order_reference(username_slug: str) -> str:
     time_part = now.strftime("%H%M%S")
     suffix = uuid4().hex[:4]
     return f"{date_part}_{time_part}_{username_slug}_{suffix}"
+
+
 settings = get_settings()
-IST = timezone(timedelta(hours=5, minutes=30))
 
 router = APIRouter(prefix="/api/v1/razorpay", tags=["razorpay-payments"])
+
+
+def _should_expose_exception_details(request: Request) -> bool:
+    """
+    Expose exception details only for local callers (to avoid leaking internals).
+    """
+    try:
+        if getattr(settings, "DEBUG", False):
+            return True
+        # Non-production environments are safe for debugging.
+        if not settings.is_production():
+            return True
+
+        # Local dev: browser typically hits localhost.
+        origin = (request.headers.get("origin") or request.headers.get("referer") or "").lower()
+        if (
+            "localhost" in origin
+            or "127.0.0.1" in origin
+            or ":5173" in origin
+            or "5173" in origin
+        ):
+            return True
+
+        client_host = (request.client.host or "").lower() if request.client else ""
+        if client_host in ("127.0.0.1", "::1"):
+            return True
+    except Exception:
+        return False
+    return False
 
 
 async def _resolve_offering_for_order_item(
     db: AsyncSession, offering_uuid: UUID
 ):
     """
-    Load medicine_brand_offering (cart id) with medicine name and brand display name.
-    Returns (medicine_name, brand_display_name) or (None, None) if not found.
+    Load medicine_brand_offering (cart id) with medicine name, brand display name, and Rx flag.
+    Returns (medicine_name, brand_display_name, requires_prescription) or (None, None, None) if not found.
     """
     stmt = (
-        select(Medicine.name, Brand.name)
+        select(Medicine.name, Brand.name, Medicine.is_prescription_required)
         .select_from(MedicineBrandOffering)
         .join(Medicine, MedicineBrandOffering.medicine_id == Medicine.id)
         .join(Brand, MedicineBrandOffering.brand_id == Brand.id)
@@ -88,8 +123,38 @@ async def _resolve_offering_for_order_item(
     )
     row = (await db.execute(stmt)).first()
     if not row:
-        return None, None
-    return row[0], row[1]
+        return None, None, None
+    return row[0], row[1], bool(row[2])
+
+
+def _validated_prescription_path(raw: Optional[str], required: bool) -> Optional[str]:
+    """
+    Normalize and validate prescription reference from upload API (stored_as or url).
+    Returns None if optional and empty; raises HTTPException if invalid or missing when required.
+    """
+    p = (raw or "").strip()
+    if not p:
+        if required:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A prescription upload is required for one or more medicines in your cart.",
+            )
+        return None
+    if ".." in p or "\n" in p or "\r" in p:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid prescription reference.",
+        )
+    if p.startswith("prescription/") and len(p) > len("prescription/"):
+        return p
+    if p.startswith("/storage/prescription/") and len(p) > len("/storage/prescription/"):
+        return p
+    if p.startswith("https://") or p.startswith("http://"):
+        return p
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid prescription reference. Please upload your prescription again.",
+    )
 
 
 # ─── Request / Response Schemas ───
@@ -126,6 +191,29 @@ def _offering_qty_from_cart_items(items: List[CartItemSchema]) -> List[tuple[UUI
     return out
 
 
+async def _cart_requires_prescription_from_catalog(
+    db: AsyncSession, items: List[CartItemSchema]
+) -> bool:
+    """True if any cart line's medicine is prescription-required (from DB, not client flags)."""
+    oq = _offering_qty_from_cart_items(items)
+    offering_ids = [uid for uid, _ in oq]
+    if not offering_ids:
+        return False
+    stmt = (
+        select(Medicine.is_prescription_required)
+        .select_from(MedicineBrandOffering)
+        .join(Medicine, MedicineBrandOffering.medicine_id == Medicine.id)
+        .where(
+            MedicineBrandOffering.id.in_(offering_ids),
+            MedicineBrandOffering.is_deleted == False,  # noqa: E712
+        )
+    )
+    for req in (await db.execute(stmt)).scalars():
+        if req:
+            return True
+    return False
+
+
 class AppliedCouponSchema(BaseModel):
     code: str = Field(..., max_length=50)
     discount_amount: float = Field(ge=0, description="Discount in rupees for this coupon")
@@ -145,6 +233,15 @@ class PaymentInitiateRequest(BaseModel):
     final_amount: float = Field(gt=0)
     coupon_code: Optional[str] = None
     applied_coupons: Optional[List[AppliedCouponSchema]] = Field(None, description="Multiple coupons; discount_amount must equal sum of their discount_amount")
+    prescription_path: Optional[str] = Field(
+        None,
+        max_length=2048,
+        description="Path or URL from POST /upload (category=prescription); required when cart contains Rx medicines.",
+    )
+
+
+def _razorpay_key_mode(key_id: str) -> Literal["test", "live"]:
+    return "test" if (key_id or "").startswith("rzp_test_") else "live"
 
 
 class PaymentInitiateResponse(BaseModel):
@@ -153,6 +250,10 @@ class PaymentInitiateResponse(BaseModel):
     razorpay_order_id: str
     key_id: str
     amount: int  # in paise
+    razorpay_mode: Literal["test", "live"] = Field(
+        ...,
+        description="test when using Razorpay test keys (rzp_test_*), live otherwise",
+    )
 
 
 class VerifyPaymentRequest(BaseModel):
@@ -202,6 +303,37 @@ async def _fetch_active_delivery_settings(db: AsyncSession):
         .order_by(DeliverySetting.created_at.desc())
     )
     return ds_row.scalars().first()
+
+
+def _coupon_notes_line(data: PaymentInitiateRequest) -> Optional[str]:
+    if data.applied_coupons:
+        return "Coupons: " + ", ".join(ac.code for ac in data.applied_coupons)
+    if data.coupon_code:
+        return f"Coupon: {data.coupon_code}"
+    return None
+
+
+def _delivery_scheduling_note_line(ds: Optional[DeliverySetting]) -> Optional[str]:
+    if not ds or not ds.is_enabled:
+        return None
+    raw = ds.delivery_slot_times
+    parsed: object = []
+    if raw:
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                parsed = []
+        elif isinstance(raw, list):
+            parsed = raw
+    labels = slot_labels_from_parsed_items(parsed)
+    meta = next_delivery_fulfillment_meta(labels, now=datetime.now(timezone.utc))
+    return fulfillment_meta_to_order_note_line(meta)
+
+
+def _merge_order_notes(data: PaymentInitiateRequest, ds: Optional[DeliverySetting]) -> Optional[str]:
+    parts = [p for p in (_coupon_notes_line(data), _delivery_scheduling_note_line(ds)) if p]
+    return " | ".join(parts) if parts else None
 
 
 def _validate_checkout_amounts(data: PaymentInitiateRequest, ds: Optional[DeliverySetting]) -> None:
@@ -257,6 +389,9 @@ async def initiate_razorpay_payment(
         oq = _offering_qty_from_cart_items(data.items)
         await inventory_service.validate_cart_stock(db, oq, current_user_id, ip_address)
 
+        rx_needed = await _cart_requires_prescription_from_catalog(db, data.items)
+        prescription_stored = _validated_prescription_path(data.prescription_path, required=rx_needed)
+
         # Resolve username for order_reference (date_time_username)
         user_row = await db.execute(
             select(User.full_name).where(User.id == current_user_id, User.is_deleted == False)
@@ -281,7 +416,8 @@ async def initiate_razorpay_payment(
             delivery_fee=Decimal(str(data.delivery_fee)),
             final_amount=Decimal(str(data.final_amount)),
             payment_method="RAZORPAY",
-            notes="Coupons: " + ", ".join(ac.code for ac in data.applied_coupons) if data.applied_coupons else (f"Coupon: {data.coupon_code}" if data.coupon_code else None),
+            notes=_merge_order_notes(data, ds),
+            prescription_path=prescription_stored,
             created_by=current_user_id,
             created_ip=ip_address,
         )
@@ -305,9 +441,10 @@ async def initiate_razorpay_payment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid medicine_brand_id for item: {item.name}",
                 )
-            medicine_name_val, brand_name_val = await _resolve_offering_for_order_item(db, brand_uuid)
+            medicine_name_val, brand_name_val, rx_db = await _resolve_offering_for_order_item(db, brand_uuid)
             if brand_name_val is None and medicine_name_val is None:
                 brand_name_val = item.name
+            requires_rx_line = bool(rx_db) if rx_db is not None else bool(item.requires_prescription)
 
             order_item = OrderItem(
                 order_id=order.id,
@@ -317,7 +454,7 @@ async def initiate_razorpay_payment(
                 quantity=item.quantity,
                 unit_price=Decimal(str(item.price)),
                 total_price=Decimal(str(round(item.price * item.quantity, 2))),
-                requires_prescription=item.requires_prescription,
+                requires_prescription=requires_rx_line,
                 created_by=current_user_id,
                 created_ip=ip_address,
             )
@@ -392,9 +529,16 @@ async def initiate_razorpay_payment(
         except Exception as e:
             await db.rollback()
             logger.error("Razorpay order create failed: %s", e, exc_info=True)
+            # In dev, include exception details to speed up debugging.
+            dev_detail = (
+                f"Payment gateway error. Please try again. "
+                f"(razorpay_create_order: {type(e).__name__}: {str(e)})"
+                if _should_expose_exception_details(request)
+                else "Payment gateway error. Please try again."
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Payment gateway error. Please try again.",
+                detail=dev_detail,
             )
 
         razorpay_order_id = rz_order.get("id")
@@ -428,6 +572,7 @@ async def initiate_razorpay_payment(
             razorpay_order_id=razorpay_order_id,
             key_id=settings.RAZORPAY_KEY_ID,
             amount=amount_paise,
+            razorpay_mode=_razorpay_key_mode(settings.RAZORPAY_KEY_ID),
         )
 
     except HTTPException:
@@ -436,9 +581,16 @@ async def initiate_razorpay_payment(
     except Exception as e:
         await db.rollback()
         logger.error("Error initiating payment: %s", e, exc_info=True)
+        # In dev, include exception details to unblock UI testing.
+        dev_detail = (
+            f"Failed to initiate payment. Please try again. "
+            f"({type(e).__name__}: {str(e)})"
+            if _should_expose_exception_details(request)
+            else "Failed to initiate payment. Please try again."
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to initiate payment. Please try again.",
+            detail=dev_detail,
         )
 
 
@@ -475,6 +627,9 @@ async def mock_initiate_payment(
         oq = _offering_qty_from_cart_items(data.items)
         await inventory_service.validate_cart_stock(db, oq, current_user_id, ip_address)
 
+        rx_needed = await _cart_requires_prescription_from_catalog(db, data.items)
+        prescription_stored = _validated_prescription_path(data.prescription_path, required=rx_needed)
+
         user_row = await db.execute(
             select(User.full_name).where(User.id == current_user_id, User.is_deleted == False)
         )
@@ -497,7 +652,8 @@ async def mock_initiate_payment(
             delivery_fee=Decimal(str(data.delivery_fee)),
             final_amount=Decimal(str(data.final_amount)),
             payment_method="RAZORPAY",
-            notes="Coupons: " + ", ".join(ac.code for ac in data.applied_coupons) if data.applied_coupons else (f"Coupon: {data.coupon_code}" if data.coupon_code else None),
+            notes=_merge_order_notes(data, ds),
+            prescription_path=prescription_stored,
             created_by=current_user_id,
             created_ip=ip_address,
         )
@@ -520,9 +676,10 @@ async def mock_initiate_payment(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid medicine_brand_id for item: {item.name}",
                 )
-            medicine_name_val, brand_name_val = await _resolve_offering_for_order_item(db, brand_uuid)
+            medicine_name_val, brand_name_val, rx_db = await _resolve_offering_for_order_item(db, brand_uuid)
             if brand_name_val is None and medicine_name_val is None:
                 brand_name_val = item.name
+            requires_rx_line = bool(rx_db) if rx_db is not None else bool(item.requires_prescription)
             order_item = OrderItem(
                 order_id=order.id,
                 medicine_brand_id=brand_uuid,
@@ -531,7 +688,7 @@ async def mock_initiate_payment(
                 quantity=item.quantity,
                 unit_price=Decimal(str(item.price)),
                 total_price=Decimal(str(round(item.price * item.quantity, 2))),
-                requires_prescription=item.requires_prescription,
+                requires_prescription=requires_rx_line,
                 created_by=current_user_id,
                 created_ip=ip_address,
             )

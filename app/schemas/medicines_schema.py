@@ -36,6 +36,11 @@ class MedicineCreateRequest(BaseCreateRequest):
     is_prescription_required: bool = Field(False)
     description: Optional[str] = None
     is_available: bool = Field(True)
+    image_path: Optional[str] = Field(
+        None,
+        max_length=512,
+        description="Storage path from POST /upload (category=medicine), e.g. medicine/filename.jpg",
+    )
 
     model_config = {"json_schema_extra": {"example": {
         "name": "Paracetamol 500mg",
@@ -53,6 +58,11 @@ class MedicineUpdateRequest(BaseUpdateRequest):
     description: Optional[str] = None
     is_available: Optional[bool] = None
     is_active: Optional[bool] = None
+    image_path: Optional[str] = Field(
+        None,
+        max_length=512,
+        description="Set to new path or null to remove image",
+    )
 
 
 class MedicineResponse(BaseResponse):
@@ -63,6 +73,7 @@ class MedicineResponse(BaseResponse):
     is_prescription_required: bool
     description: Optional[str] = None
     is_available: bool
+    image_path: Optional[str] = Field(None, description="Relative storage path for product image")
     brands: Optional[List[MedicineBrandSummary]] = Field(None, description="Offerings when include_brands=true")
 
     model_config = {"json_schema_extra": {"example": {

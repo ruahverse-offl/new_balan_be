@@ -385,6 +385,14 @@ async def initiate_razorpay_payment(
             detail="Invalid phone number. Must be at least 10 digits.",
         )
 
+    if data.applied_coupons:
+        applied_sum = sum(ac.discount_amount for ac in data.applied_coupons)
+        if abs(applied_sum - data.discount_amount) > 0.01:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Discount mismatch: applied_coupons sum {applied_sum} != discount_amount {data.discount_amount}",
+            )
+
     try:
         oq = _offering_qty_from_cart_items(data.items)
         await inventory_service.validate_cart_stock(db, oq, current_user_id, ip_address)

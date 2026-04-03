@@ -906,8 +906,8 @@ Razorpay powers online payments for customer orders: create order, open Razorpay
 
 Set in `.env`:
 
-- `RAZORPAY_KEY_ID` – Public key (used by frontend checkout).
-- `RAZORPAY_KEY_SECRET` – Secret key (server-side only; never expose to frontend).
+- `RAZORPAY_KEY_ID` – From dashboard; returned to the SPA in `POST /razorpay/initiate` (not stored in frontend `.env`).
+- `RAZORPAY_KEY_SECRET` – Server-side only; never put in the frontend or commit to git.
 
 Get both from [Razorpay Dashboard](https://dashboard.razorpay.com) (use test keys for development).
 

@@ -3,11 +3,14 @@ Permissions Service
 Business logic layer for permissions
 """
 
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
+from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
+from app.db.models import RolePermission
 from app.repositories.permissions_repository import PermissionsRepository
 from app.schemas.permissions_schema import (
     PermissionCreateRequest,
@@ -93,6 +96,28 @@ class PermissionsService(BaseService):
         updated_by: UUID,
         updated_ip: str
     ) -> bool:
-        """Soft delete a permission."""
+        """
+        Soft delete a permission and all role↔permission links for it.
+
+        RBAC already ignores deleted permissions, but removing links keeps the
+        assign-permissions UI and reports consistent.
+        """
         logger.info(f"Deleting permission: {permission_id}")
+        perm = await self.repository.get_by_id(permission_id)
+        if not perm or getattr(perm, "is_deleted", False):
+            return False
+
+        now = datetime.now(timezone.utc)
+        await self.session.execute(
+            sa_update(RolePermission)
+            .where(RolePermission.permission_id == permission_id)
+            .where(RolePermission.is_deleted == False)
+            .values(
+                is_deleted=True,
+                updated_by=updated_by,
+                updated_ip=updated_ip,
+                updated_at=now,
+            )
+        )
+        await self.session.flush()
         return await self.repository.soft_delete(permission_id, updated_by, updated_ip)

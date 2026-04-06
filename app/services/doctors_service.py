@@ -17,6 +17,7 @@ from app.schemas.doctors_schema import (
 )
 from app.schemas.common import PaginationResponse
 from app.services.base_service import BaseService
+from app.utils.doctor_timing import normalize_doctor_timing_for_orm
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class DoctorsService(BaseService):
         logger.info(f"Creating doctor: {data.name}")
         doctor_data = data.model_dump()
         doctor_data["is_active"] = True
+        normalize_doctor_timing_for_orm(doctor_data)
         doctor = await self.repository.create(doctor_data, created_by, created_ip)
         doctor_dict = self._model_to_dict(doctor)
         return DoctorResponse(**doctor_dict)
@@ -82,6 +84,7 @@ class DoctorsService(BaseService):
         """Update a doctor."""
         logger.info(f"Updating doctor: {doctor_id}")
         doctor_data = data.model_dump(exclude_unset=True)
+        normalize_doctor_timing_for_orm(doctor_data, is_update=True)
         logger.info(f"Doctor update payload keys: {list(doctor_data.keys())}, name present: {'name' in doctor_data}")
         doctor = await self.repository.update(doctor_id, doctor_data, updated_by, updated_ip)
         if not doctor:

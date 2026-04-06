@@ -6,7 +6,7 @@ Lightweight aggregates for admin overview (orders, medicines, sales revenue).
 from decimal import Decimal
 from typing import Dict
 
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select, and_, not_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Medicine, Order
@@ -31,11 +31,18 @@ class KpiSummaryRepository:
         total_medicines_q = select(func.count(Medicine.id)).where(Medicine.is_deleted == False)  # noqa: E712
         total_medicines = (await self.session.execute(total_medicines_q)).scalar() or 0
 
-        # Total sales = sum of each order's final_amount (post discount + delivery), excluding cancelled
+        # Total sales: exclude cancelled, staff-cancelled, undelivered returns, refunds
+        excluded_statuses = (
+            "CANCELLED",
+            "CANCELLED_BY_STAFF",
+            "DELIVERY_RETURNED",
+            "REFUND_INITIATED",
+            "REFUNDED",
+        )
         total_sales_q = select(func.coalesce(func.sum(Order.final_amount), 0)).where(
             and_(
                 Order.is_deleted == False,  # noqa: E712
-                Order.order_status != "CANCELLED",
+                not_(Order.order_status.in_(excluded_statuses)),
             )
         )
         total_sales_raw = (await self.session.execute(total_sales_q)).scalar() or 0

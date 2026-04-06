@@ -16,7 +16,7 @@ from app.schemas.order_items_schema import (
     OrderItemResponse,
     OrderItemListResponse
 )
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_permission, require_any_permission
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/order-items", tags=["order-items"])
@@ -54,7 +54,7 @@ async def create_order_items_bulk(
 async def get_order_item_by_id(
     item_id: UUID,
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_permission("ORDER_VIEW"))
+    _: UUID = Depends(require_any_permission(["ORDER_VIEW", "PAYMENT_PROCESS"]))
 ):
     """Get order item by ID."""
     service = OrderItemsService(db)
@@ -76,7 +76,7 @@ async def get_order_items_list(
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
     order_id: Optional[UUID] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_permission("ORDER_VIEW"))
+    _: UUID = Depends(require_any_permission(["ORDER_VIEW", "PAYMENT_PROCESS"]))
 ):
     """Get list of order items with pagination, search, and sort."""
     service = OrderItemsService(db)

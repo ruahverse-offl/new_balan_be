@@ -23,7 +23,11 @@ class OrderCreateRequest(BaseCreateRequest):
     delivery_address: str = Field(..., description="Delivery address")
     pincode: Optional[str] = Field(None, max_length=10, description="PIN code")
     city: Optional[str] = Field(None, max_length=100, description="City")
-    order_status: str = Field(default="PENDING", max_length=50, description="Order status")
+    order_status: str = Field(
+        default="PENDING",
+        max_length=50,
+        description="Lifecycle status; PENDING = payment pending, ORDER_RECEIVED = staff queue after payment",
+    )
     total_amount: Decimal = Field(..., description="Subtotal before discounts")
     discount_amount: Decimal = Field(default=0, description="Discount amount")
     delivery_fee: Decimal = Field(default=0, description="Delivery fee")
@@ -32,6 +36,7 @@ class OrderCreateRequest(BaseCreateRequest):
     processed_by: Optional[UUID] = Field(None, description="Staff user who processed the order")
     notes: Optional[str] = Field(None, description="Order notes")
     prescription_path: Optional[str] = Field(None, description="Stored path/URL for prescription file if any")
+    delivery_assigned_user_id: Optional[UUID] = Field(None, description="Delivery agent (set when assigning)")
 
     model_config = {"json_schema_extra": {"example": {
         "customer_name": "Ravi Kumar",
@@ -56,7 +61,10 @@ class OrderUpdateRequest(BaseUpdateRequest):
     delivery_address: Optional[str] = Field(None, description="Delivery address")
     pincode: Optional[str] = Field(None, max_length=10, description="PIN code")
     city: Optional[str] = Field(None, max_length=100, description="City")
-    order_status: Optional[str] = Field(None, max_length=50, description="Order status")
+    order_status: Optional[str] = Field(None, max_length=50, description="Order lifecycle status")
+    delivery_assigned_user_id: Optional[UUID] = Field(None, description="Assign delivery agent (with DELIVERY_ASSIGNED)")
+    cancellation_reason: Optional[str] = Field(None, description="Required when setting CANCELLED_BY_STAFF")
+    return_reason: Optional[str] = Field(None, description="Reason when customer refused delivery (DELIVERY_RETURNED)")
     total_amount: Optional[Decimal] = Field(None, description="Subtotal before discounts")
     discount_amount: Optional[Decimal] = Field(None, description="Discount amount")
     delivery_fee: Optional[Decimal] = Field(None, description="Delivery fee")
@@ -67,7 +75,7 @@ class OrderUpdateRequest(BaseUpdateRequest):
     prescription_path: Optional[str] = Field(None, description="Prescription file path/URL")
 
     model_config = {"json_schema_extra": {"example": {
-        "order_status": "CONFIRMED",
+        "order_status": "ORDER_TAKEN",
     }}}
 
 
@@ -93,6 +101,11 @@ class OrderResponse(BaseResponse):
     processed_by: Optional[UUID] = Field(None, description="Staff who processed")
     notes: Optional[str] = Field(None, description="Order notes")
     prescription_path: Optional[str] = Field(None, description="Prescription file path/URL")
+    delivery_assigned_user_id: Optional[UUID] = Field(None, description="Assigned delivery user id")
+    cancellation_reason: Optional[str] = Field(None, description="Why staff cancelled (wrong Rx, etc.)")
+    cancelled_by_user_id: Optional[UUID] = Field(None, description="Staff who cancelled")
+    cancelled_at: Optional[datetime] = Field(None, description="When staff cancelled")
+    return_reason: Optional[str] = Field(None, description="Why delivery was returned / refused")
 
     model_config = {"json_schema_extra": {"example": {
         "id": "o1e12345-6789-0123-4567-890123456789",
@@ -100,7 +113,7 @@ class OrderResponse(BaseResponse):
         "customer_name": "Ravi Kumar",
         "customer_phone": "9876543210",
         "delivery_address": "123 Main St, Chennai",
-        "order_status": "CONFIRMED",
+        "order_status": "ORDER_RECEIVED",
         "total_amount": 350.00,
         "discount_amount": 50.00,
         "delivery_fee": 30.00,
@@ -131,7 +144,7 @@ class OrderDetailResponse(BaseModel):
             "customer_name": "Ravi Kumar",
             "customer_phone": "9876543210",
             "delivery_address": "123 Main St, Chennai",
-            "order_status": "CONFIRMED",
+            "order_status": "ORDER_RECEIVED",
             "total_amount": 350.00,
             "discount_amount": 50.00,
             "delivery_fee": 30.00,

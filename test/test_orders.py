@@ -188,12 +188,16 @@ class TestOrdersCRUD:
         create_resp = await test_client.post("/api/v1/orders/", json=order_data)
         order_id = create_resp.json()["id"]
         
-        update_data = {"order_status": "COMPLETED"}
+        update_data = {
+            "order_status": "CANCELLED_BY_STAFF",
+            "cancellation_reason": "Test cancellation — invalid prescription",
+        }
         response = await test_client.patch(f"/api/v1/orders/{order_id}", json=update_data)
         
         assert response.status_code == 200
         data = response.json()
-        assert data["order_status"] == "COMPLETED"
+        assert data["order_status"] == "CANCELLED_BY_STAFF"
+        assert data["cancellation_reason"] == "Test cancellation — invalid prescription"
         assert "updated_by" in data
     
     async def test_delete_order(

@@ -5,7 +5,7 @@ Base models and table definitions.
 Naming: master tables use prefix ``M_``, transaction tables use prefix ``T_``.
 """
 
-from sqlalchemy import Column, String, Boolean, Text, Integer, Date, Numeric, ForeignKey, DateTime, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, Text, Integer, Date, Time, Numeric, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import text
 from datetime import timezone, timedelta
@@ -169,6 +169,11 @@ class Order(BaseModel):
     processed_by = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=True)
     notes = Column(Text, nullable=True)
     prescription_path = Column(Text, nullable=True)
+    delivery_assigned_user_id = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=True)
+    cancellation_reason = Column(Text, nullable=True)
+    cancelled_by_user_id = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    return_reason = Column(Text, nullable=True)
 
 
 class Payment(BaseModel):
@@ -193,6 +198,18 @@ class Doctor(MasterModel):
     name = Column(String(255), nullable=False)
     specialty = Column(String(255), nullable=False)
     qualifications = Column(Text, nullable=True)
+    sub_specialty = Column(String(255), nullable=True)
+    bio = Column(Text, nullable=True)
+    experience = Column(Text, nullable=True)
+    education = Column(Text, nullable=True)
+    specializations = Column(Text, nullable=True)
+    phone = Column(String(20), nullable=True)
+    email = Column(String(255), nullable=True)
+    address = Column(Text, nullable=True)
+    morning_start = Column(Time, nullable=True)
+    morning_end = Column(Time, nullable=True)
+    evening_start = Column(Time, nullable=True)
+    evening_end = Column(Time, nullable=True)
     morning_timings = Column(String(100), nullable=True)
     evening_timings = Column(String(100), nullable=True)
     image_url = Column(Text, nullable=True)
@@ -205,7 +222,7 @@ class Appointment(BaseModel):
     patient_name = Column(String(255), nullable=False)
     patient_phone = Column(String(15), nullable=False)
     appointment_date = Column(Date, nullable=False)
-    appointment_time = Column(String(50), nullable=True)
+    appointment_time = Column(Time, nullable=True)
     status = Column(String(50), nullable=False, default="PENDING")
     message = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)

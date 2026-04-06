@@ -104,6 +104,45 @@ def _should_expose_exception_details(request: Request) -> bool:
     return False
 
 
+def _is_razorpay_connection_failure(exc: BaseException) -> bool:
+    """True when the Razorpay HTTP client fails before a normal API response (TLS/TCP/timeout)."""
+    seen: set[int] = set()
+    chain: BaseException | None = exc
+    while chain is not None and id(chain) not in seen:
+        seen.add(id(chain))
+        name = type(chain).__name__
+        if name in (
+            "ConnectionError",
+            "RemoteDisconnected",
+            "ProtocolError",
+            "Timeout",
+            "ReadTimeoutError",
+            "ConnectTimeoutError",
+            "SSLError",
+            "TimeoutError",
+        ):
+            return True
+        low = str(chain).lower()
+        if "remote end closed connection" in low or "connection aborted" in low:
+            return True
+        chain = chain.__cause__ or chain.__context__
+    return False
+
+
+def _razorpay_order_create_error_detail(exc: BaseException, request: Request) -> str:
+    parts = ["Payment gateway error. Please try again."]
+    if _is_razorpay_connection_failure(exc):
+        parts.append(
+            "The backend could not complete HTTPS to Razorpay (connection closed or blocked). "
+            "Check VPN/firewall/proxy, confirm RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET are valid test keys from "
+            "https://dashboard.razorpay.com/ , and from this machine run: curl -I https://api.razorpay.com/v1/ "
+            "For local flows without Razorpay, use POST /api/v1/razorpay/mock-initiate."
+        )
+    if _should_expose_exception_details(request):
+        parts.append(f"({type(exc).__name__}: {exc})")
+    return " ".join(parts)
+
+
 async def _resolve_offering_for_order_item(
     db: AsyncSession, offering_uuid: UUID
 ):
@@ -537,16 +576,9 @@ async def initiate_razorpay_payment(
         except Exception as e:
             await db.rollback()
             logger.error("Razorpay order create failed: %s", e, exc_info=True)
-            # In dev, include exception details to speed up debugging.
-            dev_detail = (
-                f"Payment gateway error. Please try again. "
-                f"(razorpay_create_order: {type(e).__name__}: {str(e)})"
-                if _should_expose_exception_details(request)
-                else "Payment gateway error. Please try again."
-            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=dev_detail,
+                detail=_razorpay_order_create_error_detail(e, request),
             )
 
         razorpay_order_id = rz_order.get("id")
@@ -843,7 +875,7 @@ async def mock_complete_payment(
             sa_update(Order)
             .where(Order.id == order.id)
             .values(
-                order_status="CONFIRMED",
+                order_status="ORDER_RECEIVED",
                 payment_completed_at=now_ist,
                 updated_by=current_user_id,
                 updated_ip=ip_address,
@@ -862,7 +894,7 @@ async def mock_complete_payment(
         payment_status="SUCCESS",
         amount=float(payment.amount),
         transaction_id=mock_txn_id,
-        order_status="CONFIRMED",
+        order_status="ORDER_RECEIVED",
     )
 
 
@@ -934,7 +966,7 @@ async def verify_razorpay_payment(
             sa_update(Order)
             .where(Order.id == order.id)
             .values(
-                order_status="CONFIRMED",
+                order_status="ORDER_RECEIVED",
                 payment_completed_at=now_ist,
                 updated_by=current_user_id,
                 updated_ip=ip_address,
@@ -955,7 +987,7 @@ async def verify_razorpay_payment(
         payment_status="SUCCESS",
         amount=float(payment.amount),
         transaction_id=data.razorpay_payment_id,
-        order_status="CONFIRMED",
+        order_status="ORDER_RECEIVED",
     )
 
 

@@ -225,6 +225,11 @@ class DatabaseConnection:
             async with cls._engine.begin() as conn:
                 # Use run_sync to execute the synchronous create_all in async context
                 await conn.run_sync(cls._create_all_tables)
+                # create_all does not ALTER existing tables — add columns that newer models expect (PostgreSQL only).
+                if conn.dialect.name == "postgresql":
+                    from app.db.order_fulfillment_schema import apply_order_fulfillment_schema
+
+                    await apply_order_fulfillment_schema(conn)
             
             logger.info("Database tables created/verified successfully")
             print("[OK] Database tables created/verified successfully!")

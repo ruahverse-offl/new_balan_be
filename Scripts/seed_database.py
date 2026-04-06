@@ -10,7 +10,9 @@ Options:
     --reset     TRUNCATE all application tables (CASCADE) then seed (destructive).
     --password  Default password for seeded users (default: NewBalan@2026)
 
-Requires DATABASE_URL and existing schema (run the API once so `create_all` runs, or ensure tables exist).
+Requires DATABASE_URL and existing schema. On startup the API runs `create_all` plus idempotent
+PostgreSQL patches (e.g. T_orders fulfillment columns). Or: `python Scripts/seed_database.py` which
+calls the same table setup.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import argparse
 import asyncio
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -97,6 +99,8 @@ PERMISSION_CODES = sorted(
         "ORDER_UPDATE",
         "ORDER_DETAIL_VIEW",
         "ORDER_CANCEL",
+        "DELIVERY_ORDER_VIEW",
+        "DELIVERY_ORDER_UPDATE",
         "PAYMENT_PROCESS",
         "APPOINTMENT_VIEW",
         "APPOINTMENT_CREATE",
@@ -141,12 +145,14 @@ RBAC_ONLY_CODES = {
 ROLES_SPEC = [
     ("ADMIN", "Full application access (operations + RBAC)."),
     ("DEV", "RBAC only — roles, permissions, role-permission links."),
+    ("DELIVERY", "Delivery agent — assigned orders only (view + status updates)."),
     ("CUSTOMER", "Storefront customer; no admin permissions."),
 ]
 
 USERS_SPEC = [
     ("admin@newbalan.com", "Admin User", "ADMIN", "9999999999"),
     ("dev@newbalan.com", "Dev User", "DEV", "9999999998"),
+    ("delivery@newbalan.com", "Delivery Agent", "DELIVERY", "9999999996"),
     ("customer@newbalan.com", "Customer User", "CUSTOMER", "9999999997"),
 ]
 
@@ -243,6 +249,8 @@ async def seed(session: AsyncSession, password_plain: str) -> None:
             return set(PERMISSION_CODES)
         if role_name == "DEV":
             return set(RBAC_ONLY_CODES)
+        if role_name == "DELIVERY":
+            return {"DELIVERY_ORDER_VIEW", "DELIVERY_ORDER_UPDATE"}
         return set()
 
     for rname, _ in ROLES_SPEC:
@@ -324,6 +332,8 @@ async def seed(session: AsyncSession, password_plain: str) -> None:
     add_grants("ADMIN", frozenset(task_ids.keys()))
     # DEV: limited menu
     add_grants("DEV", DEV_MENU_CODES)
+    # DELIVERY: orders only (assigned list from API)
+    add_grants("DELIVERY", frozenset({"orders"}))
 
     # --- Masters: categories, brands, medicines, offerings ---
     cat_id = uuid4()
@@ -439,6 +449,10 @@ async def seed(session: AsyncSession, password_plain: str) -> None:
             name="Dr. Sample Physician",
             specialty="General Medicine",
             qualifications="MBBS",
+            morning_start=time(9, 0),
+            morning_end=time(13, 0),
+            evening_start=time(16, 0),
+            evening_end=time(20, 0),
             morning_timings="9:00 AM - 1:00 PM",
             evening_timings="4:00 PM - 8:00 PM",
             consultation_fee=Decimal("300.00"),
@@ -521,7 +535,7 @@ async def seed(session: AsyncSession, password_plain: str) -> None:
             patient_name="John Patient",
             patient_phone="9876543210",
             appointment_date=date.today(),
-            appointment_time="10:00 AM",
+            appointment_time=time(10, 0),
             status="CONFIRMED",
             message="Follow-up",
             created_by=cust_uid,

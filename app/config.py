@@ -27,12 +27,13 @@ class Settings(BaseSettings):
     from environment variables, .env files, and provide type validation.
     """
     
+    # Always load new_balan_be/.env regardless of process cwd (uvicorn from repo root, IDEs, etc.)
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_BACKEND_ROOT / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
-        env_parse_none_str="None"
+        env_parse_none_str="None",
     )
     
     # ==================== Application Settings ====================

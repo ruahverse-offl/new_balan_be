@@ -145,13 +145,16 @@ RBAC_ONLY_CODES = {
 ROLES_SPEC = [
     ("ADMIN", "Full application access (operations + RBAC)."),
     ("DEV", "RBAC only — roles, permissions, role-permission links."),
+    ("MANAGER", "Operational manager — non-RBAC admin screens and staff oversight."),
     ("DELIVERY", "Delivery agent — assigned orders only (view + status updates)."),
+    ("DELIVERY_AGENT", "Delivery agent alias for deployments using DELIVERY_AGENT role code."),
     ("CUSTOMER", "Storefront customer; no admin permissions."),
 ]
 
 USERS_SPEC = [
     ("admin@newbalan.com", "Admin User", "ADMIN", "9999999999"),
     ("dev@newbalan.com", "Dev User", "DEV", "9999999998"),
+    ("manager@newbalan.com", "Manager User", "MANAGER", "9999999995"),
     ("delivery@newbalan.com", "Delivery Agent", "DELIVERY", "9999999996"),
     ("customer@newbalan.com", "Customer User", "CUSTOMER", "9999999997"),
 ]
@@ -166,6 +169,7 @@ MENU_TASKS_SPEC: list[tuple[str, str, int, str | None]] = [
     ("inventory", "Inventory", 26, "Package"),
     ("brand-master", "Brand catalog", 27, "Tag"),
     ("orders", "Orders", 30, "ShoppingCart"),
+    ("delivery-orders", "My deliveries", 31, "Truck"),
     ("appointments", "Appointments", 40, "Clock"),
     ("delivery", "Delivery Settings", 50, "Truck"),
     ("coupons", "Coupons & Marquee", 60, "Ticket"),
@@ -177,6 +181,25 @@ MENU_TASKS_SPEC: list[tuple[str, str, int, str | None]] = [
 
 # DEV: dashboard + staff (typical place for user/role tooling); extend if your UI differs
 DEV_MENU_CODES = frozenset({"dashboard", "staff", "roles-access"})
+MANAGER_MENU_CODES = frozenset(
+    {
+        "dashboard",
+        "doctors",
+        "medicines",
+        "therapeutic-categories",
+        "inventory",
+        "brand-master",
+        "orders",
+        "appointments",
+        "delivery",
+        "coupons",
+        "staff",
+        "test-bookings",
+        "payments",
+        "coupon-usages",
+    }
+)
+DELIVERY_MENU_CODES = frozenset({"delivery-orders"})
 
 
 async def _truncate_all(session: AsyncSession) -> None:
@@ -249,7 +272,46 @@ async def seed(session: AsyncSession, password_plain: str) -> None:
             return set(PERMISSION_CODES)
         if role_name == "DEV":
             return set(RBAC_ONLY_CODES)
-        if role_name == "DELIVERY":
+        if role_name == "MANAGER":
+            return {
+                "DASHBOARD_VIEW",
+                "DASHBOARD_ANALYTICS",
+                "DOCTOR_VIEW",
+                "DOCTOR_CREATE",
+                "DOCTOR_UPDATE",
+                "DOCTOR_DELETE",
+                "MEDICINE_VIEW",
+                "MEDICINE_CREATE",
+                "MEDICINE_UPDATE",
+                "MEDICINE_DELETE",
+                "MEDICINE_CATEGORY_MANAGE",
+                "ORDER_CREATE",
+                "ORDER_VIEW",
+                "ORDER_UPDATE",
+                "ORDER_DETAIL_VIEW",
+                "ORDER_CANCEL",
+                "PAYMENT_PROCESS",
+                "APPOINTMENT_VIEW",
+                "APPOINTMENT_CREATE",
+                "APPOINTMENT_UPDATE",
+                "APPOINTMENT_DELETE",
+                "APPOINTMENT_STATUS_UPDATE",
+                "DELIVERY_SETTINGS_VIEW",
+                "DELIVERY_SETTINGS_UPDATE",
+                "DELIVERY_SLOT_MANAGE",
+                "COUPON_VIEW",
+                "COUPON_CREATE",
+                "COUPON_UPDATE",
+                "COUPON_DELETE",
+                "COUPON_MARQUEE_MANAGE",
+                "STAFF_VIEW",
+                "STAFF_CREATE",
+                "STAFF_UPDATE",
+                "STAFF_DELETE",
+                "INVENTORY_VIEW",
+                "INVENTORY_UPDATE",
+            }
+        if role_name in {"DELIVERY", "DELIVERY_AGENT"}:
             return {"DELIVERY_ORDER_VIEW", "DELIVERY_ORDER_UPDATE"}
         return set()
 
@@ -332,8 +394,11 @@ async def seed(session: AsyncSession, password_plain: str) -> None:
     add_grants("ADMIN", frozenset(task_ids.keys()))
     # DEV: limited menu
     add_grants("DEV", DEV_MENU_CODES)
-    # DELIVERY: orders only (assigned list from API)
-    add_grants("DELIVERY", frozenset({"orders"}))
+    # MANAGER: non-RBAC staff operations
+    add_grants("MANAGER", MANAGER_MENU_CODES)
+    # DELIVERY / DELIVERY_AGENT: assigned-order workflow only
+    add_grants("DELIVERY", DELIVERY_MENU_CODES)
+    add_grants("DELIVERY_AGENT", DELIVERY_MENU_CODES)
 
     # --- Masters: categories, brands, medicines, offerings ---
     cat_id = uuid4()

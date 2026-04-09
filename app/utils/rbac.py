@@ -3,7 +3,7 @@ RBAC (Role-Based Access Control) Utilities
 Permission checking dependencies and service for FastAPI
 """
 
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,40 @@ from app.utils.auth import get_current_user_id
 
 class RBACService:
     """Service for role-based access control operations."""
+
+    # Sidebar task code -> permission codes that can unlock it (any-of).
+    # Keeps sidebar visibility aligned with API authorization behavior.
+    MENU_TASK_PERMISSION_MAP: Dict[str, Set[str]] = {
+        "dashboard": {"DASHBOARD_VIEW", "DASHBOARD_ANALYTICS"},
+        "roles-access": {
+            "ROLE_VIEW",
+            "ROLE_CREATE",
+            "ROLE_UPDATE",
+            "ROLE_DELETE",
+            "PERMISSION_VIEW",
+            "PERMISSION_CREATE",
+            "PERMISSION_UPDATE",
+            "PERMISSION_DELETE",
+            "ROLE_PERMISSION_VIEW",
+            "ROLE_PERMISSION_CREATE",
+            "ROLE_PERMISSION_UPDATE",
+            "ROLE_PERMISSION_DELETE",
+        },
+        "doctors": {"DOCTOR_VIEW"},
+        "medicines": {"MEDICINE_VIEW"},
+        "therapeutic-categories": {"MEDICINE_VIEW", "MEDICINE_CATEGORY_MANAGE"},
+        "inventory": {"INVENTORY_VIEW"},
+        "brand-master": {"MEDICINE_VIEW"},
+        "orders": {"ORDER_VIEW"},
+        "delivery-orders": {"DELIVERY_ORDER_VIEW", "DELIVERY_ORDER_UPDATE"},
+        "appointments": {"APPOINTMENT_VIEW"},
+        "delivery": {"DELIVERY_SETTINGS_VIEW"},
+        "coupons": {"COUPON_VIEW"},
+        "staff": {"STAFF_VIEW"},
+        "test-bookings": {"APPOINTMENT_VIEW"},
+        "payments": {"ORDER_VIEW", "PAYMENT_PROCESS"},
+        "coupon-usages": {"COUPON_VIEW"},
+    }
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -90,7 +124,9 @@ class RBACService:
         )
         result = await self.session.execute(stmt)
         rows = result.all()
-        return [
+        effective_permissions = set(await self.get_user_permissions(user_id))
+
+        items = [
             {
                 "code": r.code,
                 "display_name": r.display_name,
@@ -99,6 +135,55 @@ class RBACService:
             }
             for r in rows
         ]
+        filtered_items: List[Dict[str, Any]] = []
+        for item in items:
+            code = str(item.get("code") or "").strip().lower()
+            required = self.MENU_TASK_PERMISSION_MAP.get(code)
+            # If menu code is unknown to this map, keep existing grant behavior.
+            if not required or required.intersection(effective_permissions):
+                filtered_items.append(item)
+
+        # Permission-derived sidebar: if a role has permission for a known task,
+        # include that task even when RoleTaskGrant row is missing.
+        # This keeps menu visibility in sync with effective API permissions.
+        permission_allowed_codes = {
+            code
+            for code, required in self.MENU_TASK_PERMISSION_MAP.items()
+            if required.intersection(effective_permissions)
+        }
+        existing_codes = {str(item.get("code") or "").strip().lower() for item in filtered_items}
+        missing_codes = permission_allowed_codes.difference(existing_codes)
+        if missing_codes:
+            fallback_stmt = (
+                select(
+                    MenuTask.code,
+                    MenuTask.display_name,
+                    MenuTask.sort_order,
+                    MenuTask.icon_key,
+                )
+                .where(MenuTask.is_deleted == False)
+                .where(MenuTask.is_active == True)
+            )
+            fallback_result = await self.session.execute(fallback_stmt)
+            for row in fallback_result.all():
+                code = str(row.code or "").strip().lower()
+                if code in missing_codes:
+                    filtered_items.append(
+                        {
+                            "code": row.code,
+                            "display_name": row.display_name,
+                            "sort_order": row.sort_order,
+                            "icon_key": row.icon_key,
+                        }
+                    )
+
+        filtered_items.sort(
+            key=lambda item: (
+                int(item.get("sort_order") or 0),
+                str(item.get("display_name") or "").lower(),
+            )
+        )
+        return filtered_items
 
 
 def require_permission(permission_code: str) -> Callable:

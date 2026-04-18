@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 from typing import Literal, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator, field_serializer
+from pydantic import Field, field_validator, field_serializer, model_validator
 
 # Backend project root (directory containing `app/`, `main.py`, etc.)
 _BACKEND_ROOT = Path(__file__).resolve().parent.parent
@@ -81,17 +81,23 @@ class Settings(BaseSettings):
     )
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
         default=30,
-        description="Access token expiration time in minutes"
+        description=(
+            "Access token lifetime in minutes. "
+            "Override with env var ACCESS_TOKEN_EXPIRE_MINUTES (or in .env next to this app)."
+        ),
     )
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(
         default=7,
-        description="Refresh token expiration time in days"
+        description=(
+            "Refresh token lifetime in days. "
+            "Override with env var REFRESH_TOKEN_EXPIRE_DAYS (or in .env next to this app)."
+        ),
     )
     
     # ==================== Storage Backend Settings ====================
-    STORAGE_BACKEND: Literal["local", "azure"] = Field(
+    STORAGE_BACKEND: Literal["local", "azure", "gcs"] = Field(
         default="local",
-        description="Storage backend (local or azure)"
+        description="Storage backend: local disk, Azure Blob, or Google Cloud Storage",
     )
     
     # Local Storage Settings — uploads go under <LOCAL_STORAGE_PATH>/<category>/
@@ -118,7 +124,22 @@ class Settings(BaseSettings):
         default=None,
         description="Azure Storage Connection String"
     )
-    
+
+    # Google Cloud Storage (STORAGE_BACKEND=gcs). Uses Application Default Credentials
+    # (e.g. GOOGLE_APPLICATION_CREDENTIALS or gcloud auth application-default login).
+    GCS_BUCKET_NAME: str | None = Field(
+        default=None,
+        description="GCS bucket name for uploads when STORAGE_BACKEND=gcs",
+    )
+    GCS_CREDENTIALS_PATH: str | None = Field(
+        default=None,
+        description=(
+            "Path to GCS service account JSON. If set and GOOGLE_APPLICATION_CREDENTIALS is unset, "
+            "the app resolves this path (relative paths are from the backend project root) and sets "
+            "GOOGLE_APPLICATION_CREDENTIALS for the Google client library."
+        ),
+    )
+
     # ==================== CORS Settings ====================
     # These fields are stored as strings in .env and converted to lists by validators
     CORS_ORIGINS: str = Field(
@@ -213,7 +234,25 @@ class Settings(BaseSettings):
             "prod": "production"
         }
         return env_map.get(v_lower, v_lower)
-    
+
+    @model_validator(mode="after")
+    def wire_gcs_application_credentials(self) -> "Settings":
+        """
+        Google client libraries read credentials from GOOGLE_APPLICATION_CREDENTIALS.
+        Map optional GCS_CREDENTIALS_PATH to that env var when using GCS and not already set.
+        """
+        if self.STORAGE_BACKEND != "gcs":
+            return self
+        if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            return self
+        if not self.GCS_CREDENTIALS_PATH:
+            return self
+        p = Path(self.GCS_CREDENTIALS_PATH)
+        if not p.is_absolute():
+            p = (_BACKEND_ROOT / p).resolve()
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(p)
+        return self
+
     def get_database_url(self) -> str:
         """
         Get the complete database connection URL.

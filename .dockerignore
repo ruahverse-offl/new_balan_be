@@ -1,39 +1,58 @@
-# Git
-.git
+# Version control
+.git/
 .gitignore
+.dockerignore
 
 # Python
-__pycache__
+__pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-venv/
-env/
-.venv/
-ENV/
 *.egg-info/
 .eggs/
-.pytest_cache/
-.coverage
-htmlcov/
+dist/
+build/
 
-# Environment (use env_file in compose instead)
+# Virtual environments (image installs deps from requirements.txt)
+venv/
+env/
+ENV/
+.venv/
+
+# Secrets & local env (never bake into images)
 .env
 .env.*
 !.env.example
 
+# Tests & dev tooling (not needed to run the API)
+test/
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
 # IDE / OS
 .vscode/
 .idea/
-.DS_Store
 *.swp
-*.swo
-*~
+.DS_Store
+Thumbs.db
 
-# Docs / misc
+# Logs & local data
+*.log
+logs/
+storage/
+
+# Docs & misc (smaller build context)
 *.md
-!README.md
+LICENSE
 
-# Tests (optional: remove if you want tests in image)
-test/
+# Large / credential JSON patterns (build context should not include keys)
+*credentials*.json
+*-firebase-adminsdk-*.json
+*-service-account*.json
+new-balan-*.json

@@ -7,11 +7,9 @@ Naming: master tables use prefix ``M_``, transaction tables use prefix ``T_``.
 
 from sqlalchemy import Column, String, Boolean, Text, Integer, Date, Time, Numeric, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import text
-from datetime import timezone, timedelta
+from sqlalchemy.sql import text, func
 from app.db.db_connection import Base
-
-IST = timezone(timedelta(hours=5, minutes=30))
+from app.utils.datetime_utils import IST
 
 
 class BaseModel(Base):
@@ -21,10 +19,11 @@ class BaseModel(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     created_by = Column(UUID(as_uuid=True), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=text("timezone('Asia/Kolkata', now())"))
+    # timestamptz: DB stores UTC internally; use now() (not ambiguous session-local parsing)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     created_ip = Column(String(45), nullable=False)
     updated_by = Column(UUID(as_uuid=True), nullable=True)
-    updated_at = Column(DateTime(timezone=True), nullable=True, server_default=text("timezone('Asia/Kolkata', now())"), onupdate=text("timezone('Asia/Kolkata', now())"))
+    updated_at = Column(DateTime(timezone=True), nullable=True, server_default=func.now(), onupdate=func.now())
     updated_ip = Column(String(45), nullable=True)
     is_deleted = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 

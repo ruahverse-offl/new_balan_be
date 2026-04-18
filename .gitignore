@@ -1,8 +1,9 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+
 .Python
 build/
 develop-eggs/
@@ -16,17 +17,19 @@ parts/
 sdist/
 var/
 wheels/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual Environment
+# Virtual environments
 venv/
 env/
 ENV/
-.venv
+.venv/
 
-# Environment — never commit .env (DB credentials, secrets). Use .env.example as template.
+# Environment — never commit secrets. Use .env.example as template.
 .env
 .env.*
 .env.local
@@ -35,7 +38,7 @@ ENV/
 .env.test
 !.env.example
 
-# IDE
+# IDE & editors
 .vscode/
 .idea/
 *.swp
@@ -50,17 +53,41 @@ Thumbs.db
 *.log
 logs/
 
-# Testing
+# Testing & coverage
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
 
-# MongoDB
+# mypy / ruff / tools
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# MongoDB dumps / local data
 *.bson
 
 # Temporary files
 *.tmp
 *.temp
 
-# Local uploads default to <repo-parent>/storage/devstorage — ignore legacy folder under backend if present
+# Local file storage (uploads, dev blobs)
 storage/
+
+# Credential-style JSON (do not commit service account keys, etc.)
+*credentials*.json
+*-firebase-adminsdk-*.json
+*-service-account*.json
+new-balan-*.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+# pyenv
+.python-version

@@ -58,9 +58,8 @@ class DatabaseConnection:
             pool_size = settings.DB_POOL_SIZE
             max_overflow = settings.DB_MAX_OVERFLOW
             
-            logger.info(f"Connecting to PostgreSQL database")
-            print("[INFO] Connecting to database...")
-            
+            logger.info("Connecting to PostgreSQL database")
+
             # Create async engine with connection pooling
             cls._engine = create_async_engine(
                 database_url,
@@ -81,17 +80,12 @@ class DatabaseConnection:
             )
             
             logger.info("PostgreSQL engine and session factory created")
-            print("[OK] Database engine initialized!")
-            
+
         except SQLAlchemyError as e:
-            error_msg = f"[ERROR] Database connection FAILED: {str(e)}"
-            logger.error(f"Failed to connect to PostgreSQL: {str(e)}")
-            print(error_msg)
+            logger.error("Failed to connect to PostgreSQL: %s", e)
             raise
         except Exception as e:
-            error_msg = f"[ERROR] Database connection FAILED: {str(e)}"
-            logger.error(f"Unexpected error during PostgreSQL connection: {str(e)}")
-            print(error_msg)
+            logger.error("Unexpected error during PostgreSQL connection: %s", e)
             raise
     
     @classmethod
@@ -184,15 +178,14 @@ class DatabaseConnection:
             bool: True if connected, False otherwise
         """
         if cls._engine is None:
-            print("[ERROR] Database connection check: Engine not initialized")
+            logger.error("Database connection check: engine not initialized")
             return False
         try:
             async with cls._engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
-            print("[OK] Database connection check: Connected")
             return True
         except Exception as e:
-            print(f"[ERROR] Database connection check: Failed - {str(e)}")
+            logger.error("Database connection check failed: %s", e)
             return False
     
     @classmethod
@@ -220,8 +213,7 @@ class DatabaseConnection:
             import app.db.models  # noqa: F401
             
             logger.info("Creating database tables if they don't exist...")
-            print("[INFO] Creating database tables...")
-            
+
             async with cls._engine.begin() as conn:
                 # Use run_sync to execute the synchronous create_all in async context
                 await conn.run_sync(cls._create_all_tables)
@@ -232,17 +224,12 @@ class DatabaseConnection:
                     await apply_order_fulfillment_schema(conn)
             
             logger.info("Database tables created/verified successfully")
-            print("[OK] Database tables created/verified successfully!")
-            
+
         except SQLAlchemyError as e:
-            error_msg = f"[ERROR] Failed to create database tables: {str(e)}"
-            logger.error(f"Failed to create database tables: {str(e)}")
-            print(error_msg)
+            logger.error("Failed to create database tables: %s", e)
             raise
         except Exception as e:
-            error_msg = f"[ERROR] Unexpected error creating database tables: {str(e)}"
-            logger.error(f"Unexpected error creating database tables: {str(e)}")
-            print(error_msg)
+            logger.error("Unexpected error creating database tables: %s", e)
             raise
     
     @staticmethod

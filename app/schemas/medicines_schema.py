@@ -39,7 +39,7 @@ class MedicineCreateRequest(BaseCreateRequest):
     image_path: Optional[str] = Field(
         None,
         max_length=512,
-        description="Storage path from POST /upload (category=medicine), e.g. medicine/filename.jpg",
+        description="Path from POST /upload (category=medicine): local e.g. medicine/uuid.jpg; GCS e.g. medicines/uuid.jpg",
     )
 
     model_config = {"json_schema_extra": {"example": {
@@ -73,7 +73,10 @@ class MedicineResponse(BaseResponse):
     is_prescription_required: bool
     description: Optional[str] = None
     is_available: bool
-    image_path: Optional[str] = Field(None, description="Relative storage path for product image")
+    image_path: Optional[str] = Field(
+        None,
+        description="Relative storage path or GCS object key (medicines/...) for product image",
+    )
     brands: Optional[List[MedicineBrandSummary]] = Field(None, description="Offerings when include_brands=true")
 
     model_config = {"json_schema_extra": {"example": {

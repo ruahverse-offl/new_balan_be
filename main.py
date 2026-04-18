@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 from uuid import uuid4
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.routes import api_router
@@ -52,23 +52,17 @@ app.add_middleware(
 async def startup_event():
     """Initialize database connection and create tables on startup."""
     try:
-        print("[INFO] Initializing database connection...")
         DatabaseConnection.initialize()
 
-        # Test the actual connection
-        print("[INFO] Testing database connection...")
         is_connected = await DatabaseConnection.is_connected()
         if not is_connected:
-            print("[WARN] Database connection test failed - check credentials")
+            logger.warning("Database connection test failed — check credentials")
             raise Exception("Database connection test failed")
 
-        print("[OK] Database connection verified successfully!")
-
-        # Create tables if they don't exist (fresh schema: M_* master, T_* transaction)
         await DatabaseConnection.create_tables()
 
     except Exception as e:
-        print(f"[ERROR] Failed to initialize database: {str(e)}")
+        logger.error("Failed to initialize database: %s", e)
         raise
 
 
@@ -92,6 +86,22 @@ async def health_check():
         "status": "healthy" if is_connected else "unhealthy",
         "database": "connected" if is_connected else "disconnected"
     }
+
+
+@app.get("/medicine/{rest_of_path:path}")
+async def legacy_storage_medicine(rest_of_path: str):
+    """Static files are mounted at /storage/...; some clients requested /medicine/... by mistake."""
+    return RedirectResponse(url=f"/storage/medicine/{rest_of_path}", status_code=307)
+
+
+@app.get("/prescription/{rest_of_path:path}")
+async def legacy_storage_prescription(rest_of_path: str):
+    return RedirectResponse(url=f"/storage/prescription/{rest_of_path}", status_code=307)
+
+
+@app.get("/others/{rest_of_path:path}")
+async def legacy_storage_others(rest_of_path: str):
+    return RedirectResponse(url=f"/storage/others/{rest_of_path}", status_code=307)
 
 
 # Global exception handler so 500 errors return JSON with CORS headers

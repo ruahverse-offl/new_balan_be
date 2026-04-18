@@ -3,7 +3,6 @@ Permissions Service
 Business logic layer for permissions
 """
 
-from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 from sqlalchemy import update as sa_update
@@ -20,6 +19,7 @@ from app.schemas.permissions_schema import (
 )
 from app.schemas.common import PaginationResponse
 from app.services.base_service import BaseService
+from app.utils.datetime_utils import get_current_ist_time
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class PermissionsService(BaseService):
         if not perm or getattr(perm, "is_deleted", False):
             return False
 
-        now = datetime.now(timezone.utc)
+        now = get_current_ist_time()
         await self.session.execute(
             sa_update(RolePermission)
             .where(RolePermission.permission_id == permission_id)

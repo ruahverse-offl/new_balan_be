@@ -22,7 +22,10 @@ from app.utils.request_utils import get_client_ip
 router = APIRouter(prefix="/api/v1/polyclinic-tests", tags=["polyclinic-tests"])
 
 
-@router.post("/", status_code=status.HTTP_201_CREATED, response_model=PolyclinicTestResponse)
+# Use "" not "/" so the collection URL is /api/v1/polyclinic-tests (no trailing slash).
+# "/" would register .../polyclinic-tests/ and GET .../polyclinic-tests would 307-redirect.
+
+@router.post("", status_code=status.HTTP_201_CREATED, response_model=PolyclinicTestResponse)
 async def create_polyclinic_test(
     data: PolyclinicTestCreateRequest,
     request: Request,
@@ -36,23 +39,7 @@ async def create_polyclinic_test(
     return test
 
 
-@router.get("/{test_id}", response_model=PolyclinicTestResponse)
-async def get_polyclinic_test_by_id(
-    test_id: UUID,
-    db: AsyncSession = Depends(get_db)
-):
-    """Get polyclinic test by ID."""
-    service = PolyclinicTestsService(db)
-    test = await service.get_polyclinic_test_by_id(test_id)
-    if not test:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Polyclinic test with ID {test_id} not found"
-        )
-    return test
-
-
-@router.get("/", response_model=PolyclinicTestListResponse)
+@router.get("", response_model=PolyclinicTestListResponse)
 async def get_polyclinic_tests_list(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -69,6 +56,22 @@ async def get_polyclinic_tests_list(
         is_active=is_active
     )
     return result
+
+
+@router.get("/{test_id}", response_model=PolyclinicTestResponse)
+async def get_polyclinic_test_by_id(
+    test_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get polyclinic test by ID."""
+    service = PolyclinicTestsService(db)
+    test = await service.get_polyclinic_test_by_id(test_id)
+    if not test:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Polyclinic test with ID {test_id} not found"
+        )
+    return test
 
 
 @router.patch("/{test_id}", response_model=PolyclinicTestResponse)

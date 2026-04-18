@@ -1,17 +1,20 @@
 """
 Generic file upload and list API.
-Saves files to LOCAL_STORAGE_PATH/<category>/ (default: <workspace>/storage/devstorage/medicine|prescription|others).
-Use for medicine images, prescriptions, and other uploads.
+Saves files to LOCAL_STORAGE_PATH/<category>/ (default: <workspace>/storage/devstorage/medicine|prescription|others),
+Azure Blob, or Google Cloud Storage when STORAGE_BACKEND=gcs.
+
+For GCS, DB stores object keys like medicines/<uuid>.jpg; browsers open images via GET /storage/signed?path=...
 """
 
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, status, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, status, UploadFile
+from fastapi.responses import RedirectResponse
 
 from app.config import get_settings
 from app.utils.auth import get_current_user_id
-from app.utils.storage import StorageService
+from app.utils.storage import StorageService, generate_gcs_signed_url
 
 router = APIRouter(prefix="/api/v1", tags=["upload"])
 
@@ -57,7 +60,12 @@ async def upload_file(
             detail=f"Save failed: {str(e)}",
         )
 
-    stored_relative = info["file_url"].replace("/storage/", "", 1) if info["file_url"].startswith("/storage/") else f"{category}/{Path(info['file_url']).name}"
+    if info.get("stored_key"):
+        stored_relative = info["stored_key"]
+    elif info["file_url"].startswith("/storage/"):
+        stored_relative = info["file_url"].replace("/storage/", "", 1)
+    else:
+        stored_relative = f"{category}/{Path(info['file_url']).name}"
 
     return {
         "filename": info["file_name"],
@@ -79,3 +87,45 @@ async def list_files(category: str):
         return {"files": []}
     files = [f.name for f in dir_path.iterdir() if f.is_file()]
     return {"files": files}
+
+
+_GCS_SIGNED_PREFIXES = ("medicines/", "prescriptions/", "others/")
+
+
+@router.get("/storage/signed")
+async def redirect_to_signed_storage(
+    path: str = Query(
+        ...,
+        description="GCS object key, e.g. medicines/uuid.jpg",
+        alias="path",
+    ),
+):
+    """
+    Redirect to a time-limited GCS signed URL so <img src> and <a href> work for private buckets.
+    Allowed prefixes: medicines/, prescriptions/, others/
+    """
+    settings = get_settings()
+    if settings.STORAGE_BACKEND != "gcs" or not settings.GCS_BUCKET_NAME:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="GCS storage is not configured",
+        )
+    key = (path or "").strip()
+    if not key or ".." in key or key.startswith("/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid path")
+    if not any(key.startswith(p) for p in _GCS_SIGNED_PREFIXES):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported object path")
+
+    try:
+        signed = generate_gcs_signed_url(
+            settings.GCS_BUCKET_NAME,
+            key,
+            expiration_minutes=60,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not sign URL: {str(e)}",
+        ) from e
+
+    return RedirectResponse(url=signed, status_code=302)

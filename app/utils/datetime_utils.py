@@ -1,11 +1,23 @@
 """
 DateTime Utilities
-Helper functions for timezone handling (IST)
+Helper functions for timezone handling (IST).
+
+Storage policy (PostgreSQL ``TIMESTAMPTZ``):
+    Instants are stored in the database as UTC internally (standard for ``timestamptz``).
+    When the app sets timestamps in Python (e.g. ``payment_completed_at``), use
+    ``get_current_ist_time()`` so the wall-clock intent is India time; the driver still
+    persists the correct absolute instant.
+
+API / serialization:
+    ``BaseService._model_to_dict`` converts timezone-aware datetimes to IST for responses
+    where that path is used.
+
+JWT ``exp`` claims remain UTC per RFC 7519 — do not change ``jwt_token.py`` to IST.
 """
 
 from datetime import datetime, timezone, timedelta
 
-# IST timezone (UTC+5:30)
+# Asia/Kolkata (UTC+5:30) — single definition for the app
 IST = timezone(timedelta(hours=5, minutes=30))
 
 

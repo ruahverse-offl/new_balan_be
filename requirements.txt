@@ -10,9 +10,10 @@ pydantic==2.5.0
 pydantic-settings==2.1.0
 pydantic[email]==2.5.0
 
-# Database
-sqlalchemy[asyncio]==2.0.23
+# Database (>=2.0.24 for create_async_engine(async_creator=...) + Cloud SQL Connector)
+sqlalchemy[asyncio]==2.0.36
 asyncpg==0.29.0
+cloud-sql-python-connector>=1.11.0
 
 # Authentication & Security
 python-jose[cryptography]==3.3.0

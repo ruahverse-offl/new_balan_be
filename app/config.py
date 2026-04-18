@@ -69,6 +69,14 @@ class Settings(BaseSettings):
         default=20,
         description="Maximum overflow connections"
     )
+    INSTANCE_CONNECTION_NAME: str | None = Field(
+        default=None,
+        description=(
+            "Cloud SQL instance connection name (project:region:instance). "
+            "When set (e.g. on Cloud Run), the app uses the Cloud SQL Python Connector "
+            "with asyncpg instead of DATABASE_URL."
+        ),
+    )
     
     # ==================== JWT Authentication Settings ====================
     SECRET_KEY: str = Field(
@@ -134,9 +142,11 @@ class Settings(BaseSettings):
     GCS_CREDENTIALS_PATH: str | None = Field(
         default=None,
         description=(
-            "Path to GCS service account JSON. If set and GOOGLE_APPLICATION_CREDENTIALS is unset, "
-            "the app resolves this path (relative paths are from the backend project root) and sets "
-            "GOOGLE_APPLICATION_CREDENTIALS for the Google client library."
+            "Path to GCS service account JSON for local dev. When set, storage uses "
+            "Credentials.from_service_account_file (see app.utils.storage.get_gcs_storage_client). "
+            "When unset (e.g. Cloud Run), Application Default Credentials are used. "
+            "If GOOGLE_APPLICATION_CREDENTIALS is unset, this path is also written to that env var "
+            "for other Google client libraries (see wire_gcs_application_credentials)."
         ),
     )
 
@@ -253,13 +263,35 @@ class Settings(BaseSettings):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(p)
         return self
 
+    def resolved_gcs_credentials_path(self) -> Path | None:
+        """
+        Return an absolute path to the GCS service account JSON when ``GCS_CREDENTIALS_PATH``
+        is set; otherwise ``None``. Relative paths are resolved from the backend project root.
+        """
+        if not self.GCS_CREDENTIALS_PATH:
+            return None
+        raw = str(self.GCS_CREDENTIALS_PATH).strip()
+        if not raw:
+            return None
+        p = Path(raw)
+        if not p.is_absolute():
+            p = (_BACKEND_ROOT / p).resolve()
+        else:
+            p = p.resolve()
+        return p
+
     def get_database_url(self) -> str:
         """
-        Get the complete database connection URL.
-        
+        Get the complete database connection URL for **direct** TCP connections
+        (local dev, CI, or any host/port URL).
+
+        When ``INSTANCE_CONNECTION_NAME`` is set, the running app does **not**
+        use this URL for the engine; it uses the Cloud SQL Connector instead.
+        This method remains useful for scripts and tooling that need a URL string.
+
         Returns:
-            str: PostgreSQL connection URL
-            
+            str: PostgreSQL connection URL (asyncpg driver)
+
         If DATABASE_URL is set, it will be used. Otherwise, the URL will be
         constructed from individual database components.
         """

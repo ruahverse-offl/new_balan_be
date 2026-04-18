@@ -20,6 +20,29 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+def get_gcs_storage_client():
+    """
+    Google Cloud Storage client: explicit JSON key for local dev, ADC on Cloud Run.
+
+    - If ``GCS_CREDENTIALS_PATH`` resolves to a file → ``service_account.Credentials``
+      and ``storage.Client(credentials=...)``.
+    - Otherwise → ``storage.Client()`` (Application Default Credentials).
+    """
+    from google.cloud import storage
+    from google.oauth2 import service_account
+
+    settings = get_settings()
+    path = settings.resolved_gcs_credentials_path()
+    if path is not None:
+        if not path.is_file():
+            raise ValueError(
+                f"GCS_CREDENTIALS_PATH is set but file was not found: {path}"
+            )
+        credentials = service_account.Credentials.from_service_account_file(str(path))
+        return storage.Client(credentials=credentials)
+    return storage.Client()
+
+
 def gcs_blob_prefix_for_category(subdirectory: str) -> str:
     """Map upload category folder to GCS object prefix (matches sample: medicines/, prescriptions/)."""
     return {
@@ -40,9 +63,7 @@ def generate_gcs_signed_url(
     Build a v4 signed URL for a private GCS object. Requires credentials that can sign
     (service account key or ADC with signBlob permission).
     """
-    from google.cloud import storage
-
-    client = storage.Client()
+    client = get_gcs_storage_client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(object_path)
     return blob.generate_signed_url(
@@ -129,8 +150,6 @@ class StorageService:
 
     async def _save_to_gcs(self, file: UploadFile, subdirectory: str) -> dict:
         """Upload bytes to GCS; return HTTPS signed URL for immediate preview plus stored_key."""
-        from google.cloud import storage
-
         bucket_name = self.settings.GCS_BUCKET_NAME
         if not bucket_name:
             raise ValueError("GCS_BUCKET_NAME is required when STORAGE_BACKEND=gcs")
@@ -142,7 +161,7 @@ class StorageService:
         content_type = file.content_type or "application/octet-stream"
 
         def _upload_and_sign() -> tuple[str, str]:
-            client = storage.Client()
+            client = get_gcs_storage_client()
             bucket = client.bucket(bucket_name)
             blob = bucket.blob(blob_name)
             blob.upload_from_string(content, content_type=content_type)

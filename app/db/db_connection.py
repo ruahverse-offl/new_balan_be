@@ -6,12 +6,14 @@ with asyncpg. It handles async connection initialization, database engine manage
 and connection lifecycle.
 """
 
-from typing import Optional, AsyncGenerator
+from __future__ import annotations
+
+from typing import Any, Optional, AsyncGenerator
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     create_async_engine,
-    async_sessionmaker
+    async_sessionmaker,
 )
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.exc import SQLAlchemyError
@@ -35,42 +37,85 @@ class DatabaseConnection:
     
     _engine: Optional[AsyncEngine] = None
     _session_factory: Optional[async_sessionmaker] = None
-    
+    # Google Cloud SQL Connector (only when INSTANCE_CONNECTION_NAME is set)
+    _cloud_sql_connector: Any = None
+
     @classmethod
     def initialize(cls) -> None:
         """
         Initialize the PostgreSQL connection.
-        
-        Reads DATABASE_URL from config settings.
-        Format: postgresql+asyncpg://user:password@host:port/database
-        
+
+        **Two modes**
+
+        - **Cloud SQL (Cloud Run / GCP):** set ``INSTANCE_CONNECTION_NAME`` to
+          ``project:region:instance`` and ``DB_USER``, ``DB_PASSWORD``, ``DB_NAME``.
+          Uses ``google.cloud.sql.connector.Connector`` with **asyncpg** via
+          ``create_async_engine(..., async_creator=...)``.
+
+        - **Local / direct TCP:** leave ``INSTANCE_CONNECTION_NAME`` unset and
+          set ``DATABASE_URL`` (or ``DB_HOST`` / ``DB_PORT`` / ``DB_*``).
+
         Raises:
             SQLAlchemyError: If unable to connect to PostgreSQL
+            ValueError: If required settings are missing for the selected mode
         """
         try:
             settings = get_settings()
-            database_url = settings.get_database_url()
-            
-            if not database_url:
-                raise ValueError("DATABASE_URL is required in configuration")
-            
-            # Connection pool settings
             pool_size = settings.DB_POOL_SIZE
             max_overflow = settings.DB_MAX_OVERFLOW
-            
-            logger.info("Connecting to PostgreSQL database")
 
-            # Create async engine with connection pooling
-            cls._engine = create_async_engine(
-                database_url,
-                pool_size=pool_size,
-                max_overflow=max_overflow,
-                pool_pre_ping=True,
-                echo=False,
-                future=True,
-            )
-            
-            # Create session factory
+            instance = (settings.INSTANCE_CONNECTION_NAME or "").strip()
+
+            if instance:
+                if not settings.DB_USER or not settings.DB_PASSWORD or not settings.DB_NAME:
+                    raise ValueError(
+                        "INSTANCE_CONNECTION_NAME is set; DB_USER, DB_PASSWORD, and DB_NAME "
+                        "are required for Cloud SQL Connector."
+                    )
+
+                from google.cloud.sql.connector import Connector
+
+                cls._cloud_sql_connector = Connector()
+
+                async def _async_creator():
+                    return await cls._cloud_sql_connector.connect_async(
+                        instance,
+                        "asyncpg",
+                        user=settings.DB_USER,
+                        password=settings.DB_PASSWORD,
+                        db=settings.DB_NAME,
+                    )
+
+                logger.info(
+                    "Connecting to PostgreSQL via Cloud SQL Connector (instance=%s)",
+                    instance,
+                )
+
+                cls._engine = create_async_engine(
+                    "postgresql+asyncpg://",
+                    async_creator=_async_creator,
+                    pool_size=pool_size,
+                    max_overflow=max_overflow,
+                    pool_pre_ping=True,
+                    echo=False,
+                )
+            else:
+                database_url = settings.get_database_url()
+                if not database_url:
+                    raise ValueError(
+                        "DATABASE_URL is required when INSTANCE_CONNECTION_NAME is not set"
+                    )
+
+                logger.info("Connecting to PostgreSQL database (direct URL)")
+
+                cls._engine = create_async_engine(
+                    database_url,
+                    pool_size=pool_size,
+                    max_overflow=max_overflow,
+                    pool_pre_ping=True,
+                    echo=False,
+                )
+
             cls._session_factory = async_sessionmaker(
                 cls._engine,
                 class_=AsyncSession,
@@ -78,7 +123,7 @@ class DatabaseConnection:
                 autoflush=False,
                 autocommit=False,
             )
-            
+
             logger.info("PostgreSQL engine and session factory created")
 
         except SQLAlchemyError as e:
@@ -167,7 +212,10 @@ class DatabaseConnection:
             await cls._engine.dispose()
             cls._engine = None
             cls._session_factory = None
-            logger.info("PostgreSQL connection closed")
+        if cls._cloud_sql_connector is not None:
+            cls._cloud_sql_connector.close()
+            cls._cloud_sql_connector = None
+        logger.info("PostgreSQL connection closed")
     
     @classmethod
     async def is_connected(cls) -> bool:

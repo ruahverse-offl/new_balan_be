@@ -1,18 +1,21 @@
 """
 FastAPI Application Entry Point
 """
-# (touch to trigger uvicorn --reload)
+
+import asyncio
 import logging
 import traceback
 from pathlib import Path
 from uuid import uuid4
+
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from app.routes import api_router
+
 from app.config import get_settings
 from app.db.db_connection import DatabaseConnection
+from app.routes import api_router
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +27,7 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Request correlation ID middleware (X-Request-ID)
+
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
     request_id = request.headers.get("X-Request-ID") or str(uuid4())
@@ -33,14 +36,13 @@ async def add_request_id(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
-# CORS (configurable via env; lock down in production)
+
 _cors_origins = settings.cors_origins_list
 _allow_all_origins = len(_cors_origins) == 1 and _cors_origins[0] == "*"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    # If allow_origins is ["*"], credentials MUST be false (per spec; browsers will reject otherwise)
     allow_credentials=(False if _allow_all_origins else bool(settings.CORS_ALLOW_CREDENTIALS)),
     allow_methods=settings.cors_methods_list,
     allow_headers=settings.cors_headers_list,
@@ -48,27 +50,33 @@ app.add_middleware(
 )
 
 
+async def _init_db_background() -> None:
+    """Connect and create tables after the server is listening (avoids Cloud Run timeout)."""
+    await asyncio.sleep(2)
+    try:
+        connected = await DatabaseConnection.is_connected()
+        if not connected:
+            logger.warning("Database connection check failed — see logs above")
+            return
+        await DatabaseConnection.create_tables()
+        logger.info("Database connected and tables ensured")
+    except Exception as exc:
+        logger.error("Background database initialization failed: %s", exc, exc_info=True)
+
+
 @app.on_event("startup")
-async def startup_event():
-    """Initialize database connection and create tables on startup."""
+async def startup_event() -> None:
+    """Create the SQLAlchemy engine immediately; verify DB in a background task."""
     try:
         DatabaseConnection.initialize()
-
-        is_connected = await DatabaseConnection.is_connected()
-        if not is_connected:
-            logger.warning("Database connection test failed — check credentials")
-            raise Exception("Database connection test failed")
-
-        await DatabaseConnection.create_tables()
-
-    except Exception as e:
-        logger.error("Failed to initialize database: %s", e)
-        raise
+        asyncio.create_task(_init_db_background())
+        logger.info("Application started; database initialization running in background")
+    except Exception as exc:
+        logger.error("Failed to create database engine: %s", exc, exc_info=True)
 
 
 @app.on_event("shutdown")
-async def shutdown_event():
-    """Close database connection on shutdown."""
+async def shutdown_event() -> None:
     await DatabaseConnection.close()
 
 
@@ -80,35 +88,18 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check with database connectivity"""
     is_connected = await DatabaseConnection.is_connected()
     return {
         "status": "healthy" if is_connected else "unhealthy",
-        "database": "connected" if is_connected else "disconnected"
+        "database": "connected" if is_connected else "disconnected",
     }
 
 
-@app.get("/medicine/{rest_of_path:path}")
-async def legacy_storage_medicine(rest_of_path: str):
-    """Static files are mounted at /storage/...; some clients requested /medicine/... by mistake."""
-    return RedirectResponse(url=f"/storage/medicine/{rest_of_path}", status_code=307)
-
-
-@app.get("/prescription/{rest_of_path:path}")
-async def legacy_storage_prescription(rest_of_path: str):
-    return RedirectResponse(url=f"/storage/prescription/{rest_of_path}", status_code=307)
-
-
-@app.get("/others/{rest_of_path:path}")
-async def legacy_storage_others(rest_of_path: str):
-    return RedirectResponse(url=f"/storage/others/{rest_of_path}", status_code=307)
-
-
-# Global exception handler so 500 errors return JSON with CORS headers
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     req_id = getattr(getattr(request, "state", None), "request_id", None)
-    logger.error(f"Unhandled error (request_id={req_id}): {exc}\n{traceback.format_exc()}")
+    logger.error("Unhandled error (request_id=%s): %s\n%s", req_id, exc, traceback.format_exc())
     return JSONResponse(
         status_code=500,
         content={"detail": f"Internal server error: {str(exc)}", "request_id": req_id},
@@ -121,10 +112,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Include all API routes
 app.include_router(api_router)
 
-# Serve stored files at /storage (e.g. /storage/medicine/xxx.jpg). Files live under LOCAL_STORAGE_PATH (default: ../storage/devstorage from backend root).
-_storage_path = Path(get_settings().LOCAL_STORAGE_PATH).resolve()
-_storage_path.mkdir(parents=True, exist_ok=True)
-app.mount("/storage", StaticFiles(directory=str(_storage_path)), name="storage")
+# Local file serving only; Cloud Run uses GCS + signed URLs (no /storage mount).
+if get_settings().STORAGE_BACKEND == "local":
+    _storage_path = Path(get_settings().LOCAL_STORAGE_PATH).resolve()
+    _storage_path.mkdir(parents=True, exist_ok=True)
+    app.mount("/storage", StaticFiles(directory=str(_storage_path)), name="storage")

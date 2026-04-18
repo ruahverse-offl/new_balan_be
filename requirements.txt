@@ -1,19 +1,16 @@
-# New Balan Backend — Python dependencies
-# Install: pip install -r requirements.txt (use venv recommended)
-
 # FastAPI and ASGI Server
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
-# Pydantic for data validation
+# Pydantic
 pydantic==2.5.0
 pydantic-settings==2.1.0
 pydantic[email]==2.5.0
 
-# Database (>=2.0.24 for create_async_engine(async_creator=...) + Cloud SQL Connector)
+# Database
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.29.0
-cloud-sql-python-connector>=1.11.0
+cloud-sql-python-connector[asyncpg]>=1.11.0
 
 # Authentication & Security
 python-jose[cryptography]==3.3.0
@@ -23,14 +20,13 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 aiofiles==23.2.1
 
-# Storage
-azure-storage-blob==12.19.0
+# Storage - REMOVED azure, keeping only GCS
 google-cloud-storage==2.18.2
 
 # Environment variables
 python-dotenv==1.0.0
 
-# HTTP Client (for dependencies)
+# HTTP Client
 httpx==0.25.0
 
 # Payments

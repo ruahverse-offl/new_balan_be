@@ -1,371 +1,116 @@
 """
-Application Configuration Module
-
-This module provides centralized configuration management using Pydantic Settings.
-All configuration values are read from environment variables with sensible defaults.
+FastAPI Application Entry Point
 """
+import asyncio
+import logging
+import traceback
+from uuid import uuid4
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from app.routes import api_router
+from app.config import get_settings
+from app.db.db_connection import DatabaseConnection
 
-import os
-from pathlib import Path
-from typing import Literal, Union
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator, field_serializer, model_validator
-
-# Backend project root (directory containing `app/`, `main.py`, etc.)
-_BACKEND_ROOT = Path(__file__).resolve().parent.parent
-# Shared uploads live OUTSIDE the backend repo: <workspace>/storage/devstorage/
-# e.g. vps-dev/new_balan_be → vps-dev/storage/devstorage/{medicine,prescription,others}
-# Override with LOCAL_STORAGE_PATH in .env (required if you use a different layout).
-_DEFAULT_LOCAL_STORAGE = (_BACKEND_ROOT.parent / "storage" / "devstorage").resolve()
+logger = logging.getLogger(__name__)
 
 
-class Settings(BaseSettings):
-    """
-    Application settings loaded from environment variables.
-    
-    This class uses Pydantic Settings to automatically load configuration
-    from environment variables, .env files, and provide type validation.
-    """
-    
-    # Always load new_balan_be/.env regardless of process cwd (uvicorn from repo root, IDEs, etc.)
-    model_config = SettingsConfigDict(
-        env_file=str(_BACKEND_ROOT / ".env"),
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-        env_parse_none_str="None",
-    )
-    
-    # ==================== Application Settings ====================
-    APP_NAME: str = Field(default="NEW Balan", description="Application name")
-    APP_VERSION: str = Field(default="1.0.0", description="Application version")
-    APP_DESCRIPTION: str = Field(
-        default="Backend API for NEW Balan",
-        description="Application description"
-    )
-    DEBUG: bool = Field(default=False, description="Debug mode")
-    ENVIRONMENT: str = Field(
-        default="development",
-        description="Environment (development, dev, qa, staging, production, prod)"
-    )
-    
-    # ==================== Server Settings ====================
-    HOST: str = Field(default="0.0.0.0", description="Server host")
-    PORT: int = Field(default=8000, description="Server port")
-    RELOAD: bool = Field(default=False, description="Auto-reload on code changes")
-    
-    # ==================== Database Settings ====================
-    DATABASE_URL: str | None = Field(
-        default=None,
-        description="Full PostgreSQL connection URL"
-    )
-    DB_HOST: str = Field(default="localhost", description="Database host")
-    DB_PORT: int = Field(default=5432, description="Database port")
-    DB_USER: str = Field(default="postgres", description="Database user")
-    DB_PASSWORD: str = Field(default="postgres", description="Database password")
-    DB_NAME: str = Field(default="NEW_Balan", description="Database name")
-    DB_POOL_SIZE: int = Field(default=10, description="Connection pool size")
-    DB_MAX_OVERFLOW: int = Field(
-        default=20,
-        description="Maximum overflow connections"
-    )
-    INSTANCE_CONNECTION_NAME: str | None = Field(
-        default=None,
-        description=(
-            "Cloud SQL instance connection name (project:region:instance). "
-            "When set (e.g. on Cloud Run), the app uses the Cloud SQL Python Connector "
-            "with asyncpg instead of DATABASE_URL."
-        ),
-    )
-    
-    # ==================== JWT Authentication Settings ====================
-    SECRET_KEY: str = Field(
-        default="your-secret-key-change-in-production",
-        description="Secret key for JWT token signing"
-    )
-    ALGORITHM: str = Field(
-        default="HS256",
-        description="JWT algorithm (HS256, RS256, etc.)"
-    )
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(
-        default=30,
-        description=(
-            "Access token lifetime in minutes. "
-            "Override with env var ACCESS_TOKEN_EXPIRE_MINUTES (or in .env next to this app)."
-        ),
-    )
-    REFRESH_TOKEN_EXPIRE_DAYS: int = Field(
-        default=7,
-        description=(
-            "Refresh token lifetime in days. "
-            "Override with env var REFRESH_TOKEN_EXPIRE_DAYS (or in .env next to this app)."
-        ),
-    )
-    
-    # ==================== Storage Backend Settings ====================
-    STORAGE_BACKEND: Literal["local", "azure", "gcs"] = Field(
-        default="local",
-        description="Storage backend: local disk, Azure Blob, or Google Cloud Storage",
-    )
-    
-    # Local Storage Settings — uploads go under <LOCAL_STORAGE_PATH>/<category>/
-    # Default: <parent-of-backend>/storage/devstorage (not inside new_balan_be). Categories: medicine, prescription, others.
-    LOCAL_STORAGE_PATH: str = Field(
-        default=str(_DEFAULT_LOCAL_STORAGE),
-        description="Root folder for local uploads. Default: ../storage/devstorage relative to backend root.",
-    )
-    
-    # Azure Blob Storage Settings
-    AZURE_STORAGE_ACCOUNT_NAME: str | None = Field(
-        default=None,
-        description="Azure Storage Account name"
-    )
-    AZURE_STORAGE_ACCOUNT_KEY: str | None = Field(
-        default=None,
-        description="Azure Storage Account key"
-    )
-    AZURE_STORAGE_CONTAINER_NAME: str | None = Field(
-        default=None,
-        description="Azure Storage Container name"
-    )
-    AZURE_STORAGE_CONNECTION_STRING: str | None = Field(
-        default=None,
-        description="Azure Storage Connection String"
-    )
+app = FastAPI(
+    title="Medical Shop Pharmacy API",
+    description="Backend API for Medical Shop Pharmacy Management System",
+    version="1.0.0",
+)
 
-    # Google Cloud Storage (STORAGE_BACKEND=gcs). Uses Application Default Credentials
-    # (e.g. GOOGLE_APPLICATION_CREDENTIALS or gcloud auth application-default login).
-    GCS_BUCKET_NAME: str | None = Field(
-        default=None,
-        description="GCS bucket name for uploads when STORAGE_BACKEND=gcs",
-    )
-    GCS_CREDENTIALS_PATH: str | None = Field(
-        default=None,
-        description=(
-            "Path to GCS service account JSON for local dev. When set, storage uses "
-            "Credentials.from_service_account_file (see app.utils.storage.get_gcs_storage_client). "
-            "When unset (e.g. Cloud Run), Application Default Credentials are used. "
-            "If GOOGLE_APPLICATION_CREDENTIALS is unset, this path is also written to that env var "
-            "for other Google client libraries (see wire_gcs_application_credentials)."
-        ),
-    )
+# Request correlation ID middleware
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
 
-    # ==================== CORS Settings ====================
-    # These fields are stored as strings in .env and converted to lists by validators
-    CORS_ORIGINS: str = Field(
-        default="*",
-        description="Allowed CORS origins (comma-separated string, e.g., 'http://localhost:3000,http://localhost:3001' or '*' for all)"
-    )
-    CORS_ALLOW_CREDENTIALS: bool = Field(
-        default=True,
-        description="Allow credentials in CORS"
-    )
-    CORS_ALLOW_METHODS: str = Field(
-        default="*",
-        description="Allowed HTTP methods (comma-separated string, e.g., 'GET,POST,PUT,DELETE' or '*' for all)"
-    )
-    CORS_ALLOW_HEADERS: str = Field(
-        default="*",
-        description="Allowed HTTP headers (comma-separated string, e.g., 'Content-Type,Authorization' or '*' for all)"
-    )
-    
-    # ==================== Logging Settings ====================
-    LOG_LEVEL: str = Field(
-        default="INFO",
-        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
-    )
-    LOG_FORMAT: str = Field(
-        default="json",
-        description="Log format (json or text)"
-    )
-    
-    # ==================== Razorpay Payment Gateway Settings ====================
-    RAZORPAY_KEY_ID: str = Field(
-        default="",
-        description="Razorpay Key ID (public key for frontend checkout)"
-    )
-    RAZORPAY_KEY_SECRET: str = Field(
-        default="",
-        description="Razorpay Key Secret (for server-side API calls)"
-    )
-    RAZORPAY_WEBHOOK_SECRET: str = Field(
-        default="",
-        description="Optional: Razorpay webhook secret for server-to-server verification"
-    )
 
-    # ==================== Pagination Settings ====================
-    DEFAULT_PAGE_SIZE: int = Field(
-        default=20,
-        description="Default pagination page size"
-    )
-    MAX_PAGE_SIZE: int = Field(
-        default=100,
-        description="Maximum pagination page size"
-    )
-    
-    # ==================== Request/Response Settings ====================
-    REQUEST_TIMEOUT: int = Field(
-        default=30,
-        description="Request timeout in seconds"
-    )
-    MAX_UPLOAD_SIZE: int = Field(
-        default=10485760,  # 10MB in bytes
-        description="Maximum upload file size in bytes"
-    )
-
-    # ==================== Inventory / low-stock alerts ====================
-    INV_STOCK_THRESHOLD: int = Field(
-        default=10,
-        ge=0,
-        description="When on-hand stock for a medicine+brand (offering) falls below this count, an inventory alert is raised; refills at or above this level remove the alert.",
-    )
-    
-    
-    @field_validator("LOG_LEVEL")
-    @classmethod
-    def validate_log_level(cls, v):
-        """Validate log level."""
-        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        if v.upper() not in valid_levels:
-            raise ValueError(f"LOG_LEVEL must be one of {valid_levels}")
-        return v.upper()
-    
-    @field_validator("ENVIRONMENT")
-    @classmethod
-    def validate_environment(cls, v):
-        """Validate environment."""
-        valid_envs = ["development", "dev", "qa", "staging", "production", "prod"]
-        v_lower = v.lower()
-        if v_lower not in valid_envs:
-            raise ValueError(f"ENVIRONMENT must be one of {valid_envs}")
-        # Normalize to standard names
-        env_map = {
-            "dev": "development",
-            "prod": "production"
-        }
-        return env_map.get(v_lower, v_lower)
-
-    @model_validator(mode="after")
-    def wire_gcs_application_credentials(self) -> "Settings":
-        """
-        Google client libraries read credentials from GOOGLE_APPLICATION_CREDENTIALS.
-        Map optional GCS_CREDENTIALS_PATH to that env var when using GCS and not already set.
-        """
-        if self.STORAGE_BACKEND != "gcs":
-            return self
-        if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-            return self
-        if not self.GCS_CREDENTIALS_PATH:
-            return self
-        p = Path(self.GCS_CREDENTIALS_PATH)
-        if not p.is_absolute():
-            p = (_BACKEND_ROOT / p).resolve()
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(p)
-        return self
-
-    def resolved_gcs_credentials_path(self) -> Path | None:
-        """
-        Return an absolute path to the GCS service account JSON when ``GCS_CREDENTIALS_PATH``
-        is set; otherwise ``None``. Relative paths are resolved from the backend project root.
-        """
-        if not self.GCS_CREDENTIALS_PATH:
-            return None
-        raw = str(self.GCS_CREDENTIALS_PATH).strip()
-        if not raw:
-            return None
-        p = Path(raw)
-        if not p.is_absolute():
-            p = (_BACKEND_ROOT / p).resolve()
+async def _init_db():
+    """Background task to connect DB — runs after startup."""
+    await asyncio.sleep(2)  # Give Cloud Run time to fully start
+    try:
+        is_connected = await DatabaseConnection.is_connected()
+        if not is_connected:
+            logger.warning("Database connection test failed — check credentials")
         else:
-            p = p.resolve()
-        return p
-
-    def get_database_url(self) -> str:
-        """
-        Get the complete database connection URL for **direct** TCP connections
-        (local dev, CI, or any host/port URL).
-
-        When ``INSTANCE_CONNECTION_NAME`` is set, the running app does **not**
-        use this URL for the engine; it uses the Cloud SQL Connector instead.
-        This method remains useful for scripts and tooling that need a URL string.
-
-        Returns:
-            str: PostgreSQL connection URL (asyncpg driver)
-
-        If DATABASE_URL is set, it will be used. Otherwise, the URL will be
-        constructed from individual database components.
-        """
-        if self.DATABASE_URL:
-            # Ensure the URL uses asyncpg driver
-            if self.DATABASE_URL.startswith("postgresql://"):
-                return self.DATABASE_URL.replace(
-                    "postgresql://", "postgresql+asyncpg://", 1
-                )
-            elif not self.DATABASE_URL.startswith("postgresql+asyncpg://"):
-                return f"postgresql+asyncpg://{self.DATABASE_URL}"
-            return self.DATABASE_URL
-        
-        # Build from components
-        return (
-            f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}"
-            f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-        )
-    
-    def is_production(self) -> bool:
-        """Check if running in production environment."""
-        return self.ENVIRONMENT == "production"
-    
-    def is_development(self) -> bool:
-        """Check if running in development environment."""
-        return self.ENVIRONMENT == "development"
-    
-    @property
-    def cors_origins_list(self) -> list[str]:
-        """Get CORS origins as a list (converted from string)."""
-        origins = self.CORS_ORIGINS
-        if not origins or origins.strip() == "" or origins.strip() == "*":
-            return ["*"]
-        # Handle comma-separated values
-        result = [o.strip() for o in origins.split(",") if o.strip()]
-        return result if result else ["*"]
-    
-    @property
-    def cors_methods_list(self) -> list[str]:
-        """Get CORS methods as a list (converted from string)."""
-        methods = self.CORS_ALLOW_METHODS
-        if not methods or methods.strip() == "" or methods.strip() == "*":
-            return ["*"]
-        # Handle comma-separated values
-        result = [m.strip() for m in methods.split(",") if m.strip()]
-        return result if result else ["*"]
-    
-    @property
-    def cors_headers_list(self) -> list[str]:
-        """Get CORS headers as a list (converted from string)."""
-        headers = self.CORS_ALLOW_HEADERS
-        if not headers or headers.strip() == "" or headers.strip() == "*":
-            return ["*"]
-        # Handle comma-separated values
-        result = [h.strip() for h in headers.split(",") if h.strip()]
-        return result if result else ["*"]
+            await DatabaseConnection.create_tables()
+            logger.info("✅ Database connected and tables created!")
+    except Exception as e:
+        logger.error("Background DB init failed: %s", e)
 
 
-# Create a singleton instance
-settings = Settings()
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database engine and kick off background DB init."""
+    try:
+        DatabaseConnection.initialize()
+        asyncio.create_task(_init_db())  # Non-blocking!
+        logger.info("✅ App started! DB initializing in background...")
+    except Exception as e:
+        logger.error("Failed to initialize database engine: %s", e)
 
 
-def get_settings() -> Settings:
-    """
-    Get the application settings instance.
-    
-    This function provides dependency injection support for FastAPI.
-    
-    Returns:
-        Settings: Application settings instance
-        
-    Example usage in FastAPI route:
-        @app.get("/config")
-        async def get_config(settings: Settings = Depends(get_settings)):
-            return {"environment": settings.ENVIRONMENT}
-    """
-    return settings
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connection on shutdown."""
+    await DatabaseConnection.close()
+
+
+# CORS
+def _setup_cors():
+    settings = get_settings()
+    _cors_origins = settings.cors_origins_list
+    _allow_all_origins = len(_cors_origins) == 1 and _cors_origins[0] == "*"
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=(False if _allow_all_origins else bool(settings.CORS_ALLOW_CREDENTIALS)),
+        allow_methods=settings.cors_methods_list,
+        allow_headers=settings.cors_headers_list,
+        expose_headers=["*"],
+    )
+
+_setup_cors()
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint"""
+    return {"message": "Medical Shop Pharmacy API", "status": "healthy"}
+
+
+@app.get("/health")
+async def health_check():
+    """Detailed health check endpoint"""
+    is_connected = await DatabaseConnection.is_connected()
+    return {
+        "status": "healthy" if is_connected else "unhealthy",
+        "database": "connected" if is_connected else "disconnected"
+    }
+
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    req_id = getattr(getattr(request, "state", None), "request_id", None)
+    logger.error(f"Unhandled error (request_id={req_id}): {exc}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}", "request_id": req_id},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+            "X-Request-ID": req_id or "",
+        },
+    )
+
+
+# Include all API routes
+app.include_router(api_router)

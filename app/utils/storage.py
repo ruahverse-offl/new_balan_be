@@ -22,11 +22,12 @@ logger = logging.getLogger(__name__)
 
 def get_gcs_storage_client():
     """
-    Google Cloud Storage client: explicit JSON key for local dev, ADC on Cloud Run.
+    Google Cloud Storage client: explicit JSON key when present, else Application Default Credentials.
 
-    - If ``GCS_CREDENTIALS_PATH`` resolves to a file → ``service_account.Credentials``
-      and ``storage.Client(credentials=...)``.
-    - Otherwise → ``storage.Client()`` (Application Default Credentials).
+    - If ``GCS_CREDENTIALS_PATH`` resolves to an **existing** file → service account key.
+    - If the path is set but the file is missing (e.g. prod ``/secrets/...`` copied into local ``.env``) →
+      log a warning and use ``storage.Client()`` (ADC), same as Cloud Run without a key file.
+    - If ``GCS_CREDENTIALS_PATH`` is unset → ``storage.Client()`` (ADC).
     """
     from google.cloud import storage
     from google.oauth2 import service_account
@@ -34,12 +35,14 @@ def get_gcs_storage_client():
     settings = get_settings()
     path = settings.resolved_gcs_credentials_path()
     if path is not None:
-        if not path.is_file():
-            raise ValueError(
-                f"GCS_CREDENTIALS_PATH is set but file was not found: {path}"
-            )
-        credentials = service_account.Credentials.from_service_account_file(str(path))
-        return storage.Client(credentials=credentials)
+        if path.is_file():
+            credentials = service_account.Credentials.from_service_account_file(str(path))
+            return storage.Client(credentials=credentials)
+        logger.warning(
+            "GCS_CREDENTIALS_PATH points to a missing file (%s); using Application Default Credentials. "
+            "Unset GCS_CREDENTIALS_PATH or fix the path; use STORAGE_BACKEND=local to skip GCS entirely.",
+            path,
+        )
     return storage.Client()
 
 

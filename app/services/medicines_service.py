@@ -8,7 +8,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from app.repositories.medicines_repository import MedicinesRepository
 from app.db.models import MedicineBrandOffering, Brand, MedicineCategory
@@ -185,7 +185,7 @@ class MedicinesService(BaseService):
         updated_by: UUID,
         updated_ip: str,
     ) -> Optional[MedicineResponse]:
-        """Update a medicine. When is_available is False, cascade to all offerings."""
+        """Update a medicine. Storefront SKU availability is per medicine–brand offering; set `is_available` here for the catalog summary (e.g. any line sellable)."""
         update_data = {k: v for k, v in data.model_dump(exclude_unset=True).items()}
         logger.info(
             "Updating medicine: %s medicine_category_id=%s",
@@ -195,14 +195,6 @@ class MedicinesService(BaseService):
         medicine = await self.repository.update(medicine_id, update_data, updated_by, updated_ip)
         if not medicine:
             return None
-        if update_data.get("is_available") is False:
-            await self.session.execute(
-                update(MedicineBrandOffering)
-                .where(MedicineBrandOffering.medicine_id == medicine_id)
-                .where(MedicineBrandOffering.is_deleted == False)  # noqa: E712
-                .values(is_available=False, updated_by=updated_by, updated_ip=updated_ip)
-            )
-            logger.info("Cascaded is_available=False to all offerings of medicine %s", medicine_id)
         medicine_dict = self._model_to_dict(medicine)
         medicine_dict["medicine_category_name"] = await _get_medicine_category_name(
             self.session, medicine.medicine_category_id

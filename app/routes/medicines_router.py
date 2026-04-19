@@ -97,7 +97,7 @@ async def update_medicine(
     db: AsyncSession = Depends(get_db),
     current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE")),
 ):
-    """Update a medicine (staff). Setting is_available=false marks all its brands unavailable."""
+    """Update a medicine (staff). Per-brand storefront availability is PATCH /medicine-brands/{offering_id}."""
     ip_address = get_client_ip(request)
     service = MedicinesService(db)
     medicine = await service.update_medicine(medicine_id, data, current_user_id, ip_address)

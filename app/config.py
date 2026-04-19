@@ -96,9 +96,10 @@ class Settings(BaseSettings):
 
     def resolved_gcs_credentials_path(self) -> Optional[Path]:
         """
-        If ``GCS_CREDENTIALS_PATH`` is set, return absolute path to the JSON key file.
+        If ``GCS_CREDENTIALS_PATH`` is set, return the resolved path (absolute if relative).
 
-        Returns ``None`` if unset (use Application Default Credentials on GCP).
+        The file may or may not exist on disk; callers decide whether to require it.
+        Returns ``None`` if unset (typical for Cloud Run: use Application Default Credentials).
         """
         if not self.GCS_CREDENTIALS_PATH or not str(self.GCS_CREDENTIALS_PATH).strip():
             return None

@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     STORAGE_BACKEND: str = "local"
     LOCAL_STORAGE_PATH: str = "storage/devstorage"
     GCS_BUCKET_NAME: Optional[str] = None
-    GCS_CREDENTIALS_PATH: Optional[str] = None
+    GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
 
     AZURE_STORAGE_CONNECTION_STRING: Optional[str] = None
     AZURE_STORAGE_CONTAINER_NAME: Optional[str] = None
@@ -94,16 +94,16 @@ class Settings(BaseSettings):
         """True when connecting via Cloud SQL Python Connector (e.g. Cloud Run)."""
         return bool((self.INSTANCE_CONNECTION_NAME or "").strip())
 
-    def resolved_gcs_credentials_path(self) -> Optional[Path]:
+    def resolved_google_application_credentials_path(self) -> Optional[Path]:
         """
-        If ``GCS_CREDENTIALS_PATH`` is set, return the resolved path (absolute if relative).
+        If ``GOOGLE_APPLICATION_CREDENTIALS`` is set, return the resolved path (absolute if relative).
 
         The file may or may not exist on disk; callers decide whether to require it.
         Returns ``None`` if unset (typical for Cloud Run: use Application Default Credentials).
         """
-        if not self.GCS_CREDENTIALS_PATH or not str(self.GCS_CREDENTIALS_PATH).strip():
+        if not self.GOOGLE_APPLICATION_CREDENTIALS or not str(self.GOOGLE_APPLICATION_CREDENTIALS).strip():
             return None
-        p = Path(self.GCS_CREDENTIALS_PATH)
+        p = Path(self.GOOGLE_APPLICATION_CREDENTIALS)
         if not p.is_absolute():
             p = (Path.cwd() / p).resolve()
         return p

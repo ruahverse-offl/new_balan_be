@@ -14,6 +14,7 @@ from fastapi import HTTPException, status
 
 from app.repositories.orders_repository import OrdersRepository
 from app.db.models import OrderItem, Payment, IST
+from app.utils.datetime_utils import get_current_ist_time
 from app.domain import order_lifecycle as lc
 from app.schemas.orders_schema import (
     OrderCreateRequest,
@@ -210,6 +211,16 @@ class OrdersService(BaseService):
                         detail="Only the assigned delivery user can perform this delivery step.",
                     )
 
+            now_ts = get_current_ist_time()
+            if new_status == lc.ORDER_RECEIVED and not getattr(order, "order_received_at", None):
+                patch["order_received_at"] = now_ts
+            if new_status in (lc.ORDER_TAKEN, lc.ORDER_PROCESSING) and not getattr(order, "order_packed_at", None):
+                patch["order_packed_at"] = now_ts
+            if new_status == lc.DELIVERY_ASSIGNED:
+                patch["delivery_assigned_at"] = now_ts
+            if new_status == lc.DELIVERED:
+                patch["delivered_at"] = now_ts
+
         elif "delivery_assigned_user_id" in patch:
             if not actor_is_staff:
                 raise HTTPException(
@@ -222,6 +233,7 @@ class OrdersService(BaseService):
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Can only reassign delivery when order_status is DELIVERY_ASSIGNED.",
                 )
+            patch["delivery_assigned_at"] = get_current_ist_time()
 
         order = await self.repository.update(order_id, patch, updated_by, updated_ip)
         if not order:

@@ -27,6 +27,20 @@ _ORDER_FULFILLMENT_STATEMENTS = (
     """UPDATE "T_orders" SET order_status = 'DELIVERED' WHERE order_status = 'COMPLETED'""",
     """UPDATE "T_orders" SET order_status = 'ORDER_PROCESSING' WHERE order_status = 'PROCESSING'""",
     """UPDATE "T_orders" SET order_status = 'OUT_FOR_DELIVERY' WHERE order_status = 'SHIPPED'""",
+    """
+    ALTER TABLE "T_orders"
+        ADD COLUMN IF NOT EXISTS order_received_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS order_packed_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS delivery_assigned_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ
+    """,
+    """
+    UPDATE "T_orders"
+    SET order_received_at = payment_completed_at
+    WHERE order_received_at IS NULL
+      AND payment_completed_at IS NOT NULL
+      AND is_deleted = false
+    """,
 )
 
 

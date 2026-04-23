@@ -16,7 +16,7 @@ from app.schemas.polyclinic_tests_schema import (
     PolyclinicTestResponse,
     PolyclinicTestListResponse
 )
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/polyclinic-tests", tags=["polyclinic-tests"])
@@ -30,7 +30,7 @@ async def create_polyclinic_test(
     data: PolyclinicTestCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_CREATE"))
+    current_user_id: UUID = Depends(require_module_action("medicines", "create"))
 ):
     """Create a new polyclinic test. Requires MEDICINE_CREATE permission."""
     ip_address = get_client_ip(request)
@@ -80,7 +80,7 @@ async def update_polyclinic_test(
     data: PolyclinicTestUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE"))
+    current_user_id: UUID = Depends(require_module_action("medicines", "update"))
 ):
     """Update a polyclinic test. Requires MEDICINE_UPDATE permission."""
     ip_address = get_client_ip(request)
@@ -99,7 +99,7 @@ async def delete_polyclinic_test(
     test_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_DELETE"))
+    current_user_id: UUID = Depends(require_module_action("medicines", "delete"))
 ):
     """Soft delete a polyclinic test. Requires MEDICINE_DELETE permission."""
     ip_address = get_client_ip(request)

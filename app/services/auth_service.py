@@ -6,7 +6,7 @@ Business logic for user authentication (login, register, token refresh)
 from typing import Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import case, or_, select
 from fastapi import HTTPException, status
 import logging
 
@@ -80,11 +80,15 @@ class AuthService:
                 detail="Invalid email or password"
             )
         
+        role_row = await self.session.get(Role, user.role_id)
+        role_name = (role_row.name or "") if role_row else ""
+
         # Create tokens
         access_token = create_access_token(
             user_id=user.id,
             email=user.email,
-            role_id=user.role_id
+            role_id=user.role_id,
+            role_name=role_name,
         )
         refresh_token = create_refresh_token(user_id=user.id)
         
@@ -134,18 +138,20 @@ class AuthService:
                 detail="Email already registered"
             )
         
-        # Signup always assigns CUSTOMER role so users only get customer permissions
+        # Signup assigns storefront role: PUBLIC (preferred) or legacy CUSTOMER
         role_stmt = (
             select(Role)
-            .where(Role.name.ilike("CUSTOMER"))
-            .where(Role.is_active == True)
-            .where(Role.is_deleted == False)
+            .where(Role.is_active == True)  # noqa: E712
+            .where(Role.is_deleted == False)  # noqa: E712
+            .where(or_(Role.name == "PUBLIC", Role.name == "CUSTOMER"))
+            .order_by(case((Role.name == "PUBLIC", 0), else_=1))
+            .limit(1)
         )
         role_result = await self.session.execute(role_stmt)
         role = role_result.scalar_one_or_none()
         
         if not role:
-            logger.error("Registration failed: CUSTOMER role not found in database")
+            logger.error("Registration failed: PUBLIC (or CUSTOMER) role not found in database")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Registration is not configured. Please contact support."
@@ -187,7 +193,8 @@ class AuthService:
         access_token = create_access_token(
             user_id=user.id,
             email=user.email,
-            role_id=user.role_id
+            role_id=user.role_id,
+            role_name=(role.name or "") if role else "",
         )
         refresh_token = create_refresh_token(user_id=user.id)
         
@@ -264,12 +271,16 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User not found or inactive"
             )
+
+        role_row = await self.session.get(Role, user.role_id)
+        role_name = (role_row.name or "") if role_row else ""
         
         # Create new tokens
         access_token = create_access_token(
             user_id=user.id,
             email=user.email,
-            role_id=user.role_id
+            role_id=user.role_id,
+            role_name=role_name,
         )
         new_refresh_token = create_refresh_token(user_id=user.id)
         

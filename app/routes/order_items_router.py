@@ -16,7 +16,7 @@ from app.schemas.order_items_schema import (
     OrderItemResponse,
     OrderItemListResponse
 )
-from app.utils.rbac import require_permission, require_any_permission
+from app.utils.rbac import require_module_action, require_any_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/order-items", tags=["order-items"])
@@ -27,7 +27,7 @@ async def create_order_item(
     data: OrderItemCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ORDER_CREATE"))
+    current_user_id: UUID = Depends(require_module_action("orders", "create"))
 ):
     """Create a new order item."""
     ip_address = get_client_ip(request)
@@ -41,7 +41,7 @@ async def create_order_items_bulk(
     items: List[OrderItemCreateRequest],
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ORDER_CREATE"))
+    current_user_id: UUID = Depends(require_module_action("orders", "create"))
 ):
     """Create multiple order items in bulk."""
     ip_address = get_client_ip(request)
@@ -54,7 +54,7 @@ async def create_order_items_bulk(
 async def get_order_item_by_id(
     item_id: UUID,
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_any_permission(["ORDER_VIEW", "PAYMENT_PROCESS"]))
+    _: UUID = Depends(require_any_module_action([("orders", "read"), ("payments", "update")]))
 ):
     """Get order item by ID."""
     service = OrderItemsService(db)
@@ -76,7 +76,7 @@ async def get_order_items_list(
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
     order_id: Optional[UUID] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_any_permission(["ORDER_VIEW", "PAYMENT_PROCESS"]))
+    _: UUID = Depends(require_any_module_action([("orders", "read"), ("payments", "update")]))
 ):
     """Get list of order items with pagination, search, and sort."""
     service = OrderItemsService(db)
@@ -93,7 +93,7 @@ async def update_order_item(
     data: OrderItemUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ORDER_UPDATE"))
+    current_user_id: UUID = Depends(require_module_action("orders", "update"))
 ):
     """Update an order item."""
     ip_address = get_client_ip(request)
@@ -112,7 +112,7 @@ async def delete_order_item(
     item_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ORDER_UPDATE"))
+    current_user_id: UUID = Depends(require_module_action("orders", "update"))
 ):
     """Soft delete an order item."""
     ip_address = get_client_ip(request)

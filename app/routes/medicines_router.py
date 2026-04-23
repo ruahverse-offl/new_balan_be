@@ -17,7 +17,7 @@ from app.schemas.medicines_schema import (
     MedicineListResponse,
 )
 from app.utils.auth import get_current_user_id_optional
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/medicines", tags=["medicines"])
@@ -95,7 +95,7 @@ async def update_medicine(
     data: MedicineUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE")),
+    current_user_id: UUID = Depends(require_module_action("medicines", "update")),
 ):
     """Update a medicine (staff). Per-brand storefront availability is PATCH /medicine-brands/{offering_id}."""
     ip_address = get_client_ip(request)

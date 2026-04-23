@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a comprehensive backend API for managing a medical shop/pharmacy system. The API provides full CRUD (Create, Read, Update, Delete) operations for managing roles, users, medicines, orders, payments, and inventory. It also includes comprehensive dashboard endpoints for analytics and business intelligence.
+This is a comprehensive backend API for managing a medical shop/pharmacy system. The API provides full CRUD (Create, Read, Update, Delete) operations for managing roles, users, medicines, orders, payments, and inventory. Staff access is driven by a **module × CRUD** matrix (`M_modules`, `M_module_role_permissions`); the SPA loads the current user’s menu and synthetic permission codes from **`GET /api/v1/auth/me/permissions`** (see [§13](#13-current-user--admin-menu-auth)).
 
 **Base URL:** `http://localhost:8000`  
 **API Version:** `v1`  
@@ -23,7 +23,7 @@ This is a comprehensive backend API for managing a medical shop/pharmacy system.
    - [Inventory Transactions](#10-inventory-transactions)
    - [Orders](#11-orders)
    - [Payments](#12-payments)
-   - [KPI summary](#13-kpi-summary-admin-statistics)
+   - [Current user & admin menu (auth)](#13-current-user--admin-menu-auth)
    - [Razorpay Payment Gateway](#14-razorpay-payment-gateway)
 3. [Common Features](#common-features)
 4. [Error Handling](#error-handling)
@@ -733,7 +733,7 @@ Orders represent customer orders for medicines. They track the order status, app
 #### Create Order
 **POST** `/api/v1/orders/`
 
-Creates a new order.
+Creates a new order. **Requires** `Authorization: Bearer <access_token>` (no guest checkout). The user must have **`ORDER_CREATE`** on the `orders` module. For storefront roles **`PUBLIC`** and **`CUSTOMER`**, **`customer_id`** in the body **must** equal the JWT subject (logged-in user).
 
 **Request Body:**
 ```json
@@ -868,29 +868,22 @@ Creates a new payment record.
 
 ---
 
-## 13. KPI summary (admin Statistics)
+## 13. Current user & admin menu (auth)
 
-**Base Path:** `/api/v1/kpi`
+**GET** `/api/v1/auth/me/permissions`
 
-### Get KPI summary
-**GET** `/api/v1/kpi/summary`
+Requires a valid **JWT** (`Authorization: Bearer <access_token>`).
 
-Requires **DASHBOARD_VIEW**.
+Returns the signed-in user’s **RBAC-derived** payload used by the admin SPA:
 
-**Response:** 200 OK
-```json
-{
-  "total_orders": 120,
-  "total_medicines": 450,
-  "total_sales": "985000.50"
-}
-```
+| Field | Description |
+|-------|-------------|
+| `role_code` | Role name from `M_roles.name` (e.g. `ADMIN`, `DEV_ADMIN`). |
+| `role_display_name` | Short UI label derived from the role name. |
+| `role_description` | Optional `M_roles.description`. |
+| `menuItems` (JSON) / `menu_items` | Menu rows: modules with `is_menu_item` and `can_read` for the user’s role. Each item: `code`, `displayName`, `displayOrder`, `iconKey`, and **`grants`** (`canCreate`, `canRead`, `canUpdate`, `canDelete`). Sort order = array order. |
 
-- **total_orders** — count of non-deleted orders
-- **total_medicines** — count of non-deleted medicine records
-- **total_sales** — sum of each order’s `final_amount` (non-deleted, excluding `order_status` = `CANCELLED`)
-
-The previous multi-dashboard APIs under `/api/v1/dashboards/*` (finance, inventory, orders, sales) have been removed in favor of this single aggregate.
+The admin **Statistics / KPI** screen and **`GET /api/v1/kpi/summary`** were removed. Do not rely on a `dashboard` module or `DASHBOARD_VIEW` for new installs. See **`ACCESS_AND_ROLES.md`** for the matrix model.
 
 ---
 
@@ -1200,7 +1193,7 @@ Returns the OpenAPI 3.0 schema for the API.
 
 4. **Timezone:** All timestamps are in IST (Indian Standard Time, UTC+5:30).
 
-5. **Authentication:** The API uses JWT (access and refresh tokens). Login via `/api/v1/auth/login`; include `Authorization: Bearer <access_token>` for protected endpoints. Razorpay endpoints require a valid customer or staff JWT as described in [§15 Razorpay](#15-razorpay-payment-gateway).
+5. **Authentication:** The API uses JWT (access and refresh tokens). Login via `/api/v1/auth/login`; include `Authorization: Bearer <access_token>` for protected endpoints. Staff menu and permissions: [§13 Current user & admin menu](#13-current-user--admin-menu-auth). Razorpay endpoints require a valid customer or staff JWT as described in [§14 Razorpay](#14-razorpay-payment-gateway).
 
 6. **IP Address:** Client IP addresses are automatically captured from request headers for audit purposes.
 

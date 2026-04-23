@@ -25,10 +25,10 @@ router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
 
 async def _can_view_all_orders(rbac: RBACService, user_id: UUID) -> bool:
-    """Staff who see all payments (PAYMENT_PROCESS) should see all orders too — same as ORDER_VIEW."""
-    if await rbac.has_permission(user_id, "ORDER_VIEW"):
+    """Staff who see all payments should see all orders too — same as order list read."""
+    if await rbac.has_module_action(user_id, "orders", "read"):
         return True
-    if await rbac.has_permission(user_id, "PAYMENT_PROCESS"):
+    if await rbac.has_module_action(user_id, "payments", "update"):
         return True
     return False
 
@@ -38,13 +38,31 @@ async def create_order(
     data: OrderCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: Optional[UUID] = Depends(get_current_user_id_optional)
+    current_user_id: UUID = Depends(get_current_user_id),
 ):
-    """Create a new order."""
-    user_id = current_user_id or UUID("00000000-0000-0000-0000-000000000000")
+    """
+    Create a new order.
+
+    Requires a valid JWT (no guest checkout). Callers must have ``ORDER_CREATE``.
+    Storefront roles (**PUBLIC**, **CUSTOMER**) must set ``customer_id`` to the
+    logged-in user so orders cannot be placed for another account.
+    """
+    rbac_service = RBACService(db)
+    if not await rbac_service.has_module_action(current_user_id, "orders", "create"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="orders:create (matrix) required to place an order",
+        )
+    role = await rbac_service.get_user_role(current_user_id)
+    role_name = (role.name or "").upper() if role else ""
+    if role_name in ("PUBLIC", "CUSTOMER") and str(data.customer_id) != str(current_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="customer_id must match the logged-in user for storefront checkout",
+        )
     ip_address = get_client_ip(request)
     service = OrdersService(db)
-    order = await service.create_order(data, user_id, ip_address)
+    order = await service.create_order(data, current_user_id, ip_address)
     return order
 
 
@@ -67,7 +85,9 @@ async def get_order_detail(
         return detail
     if str(detail.order.customer_id) == str(current_user_id):
         return detail
-    has_delivery_access = await rbac_service.has_permission(current_user_id, "DELIVERY_ORDER_VIEW") or await rbac_service.has_permission(current_user_id, "DELIVERY_ORDER_UPDATE")
+    has_delivery_access = await rbac_service.has_module_action(
+        current_user_id, "delivery-orders", "read"
+    ) or await rbac_service.has_module_action(current_user_id, "delivery-orders", "update")
     if has_delivery_access and detail.order.delivery_assigned_user_id and str(detail.order.delivery_assigned_user_id) == str(current_user_id):
         return detail
     raise HTTPException(
@@ -97,7 +117,9 @@ async def get_order_by_id(
             return order
         if str(order.customer_id) == str(current_user_id):
             return order
-        has_delivery_access = await rbac_service.has_permission(current_user_id, "DELIVERY_ORDER_VIEW") or await rbac_service.has_permission(current_user_id, "DELIVERY_ORDER_UPDATE")
+        has_delivery_access = await rbac_service.has_module_action(
+        current_user_id, "delivery-orders", "read"
+    ) or await rbac_service.has_module_action(current_user_id, "delivery-orders", "update")
         if has_delivery_access and order.delivery_assigned_user_id and str(order.delivery_assigned_user_id) == str(current_user_id):
             return order
         raise HTTPException(
@@ -126,7 +148,9 @@ async def get_orders_list(
     """
     rbac_service = RBACService(db)
     has_full_list = await _can_view_all_orders(rbac_service, current_user_id)
-    has_delivery_scope = await rbac_service.has_permission(current_user_id, "DELIVERY_ORDER_VIEW") or await rbac_service.has_permission(current_user_id, "DELIVERY_ORDER_UPDATE")
+    has_delivery_scope = await rbac_service.has_module_action(
+        current_user_id, "delivery-orders", "read"
+    ) or await rbac_service.has_module_action(current_user_id, "delivery-orders", "update")
 
     user_id_filter = None
     delivery_assigned_filter = None
@@ -157,8 +181,10 @@ async def update_order(
     """Update an order (lifecycle transitions require ORDER_UPDATE or DELIVERY_ORDER_UPDATE)."""
     ip_address = get_client_ip(request)
     rbac_service = RBACService(db)
-    can_order_update = await rbac_service.has_permission(current_user_id, "ORDER_UPDATE")
-    can_delivery_update = await rbac_service.has_permission(current_user_id, "DELIVERY_ORDER_UPDATE")
+    can_order_update = await rbac_service.has_module_action(current_user_id, "orders", "update")
+    can_delivery_update = await rbac_service.has_module_action(
+        current_user_id, "delivery-orders", "update"
+    )
     service = OrdersService(db)
     order = await service.update_order(
         order_id,

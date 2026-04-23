@@ -18,7 +18,7 @@ from app.schemas.test_bookings_schema import (
     TestBookingListResponse
 )
 from app.utils.auth import get_current_user_id_optional
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/test-bookings", tags=["test-bookings"])
@@ -68,7 +68,7 @@ async def get_test_bookings_list(
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_permission("APPOINTMENT_VIEW"))
+    _: UUID = Depends(require_module_action("appointments", "read"))
 ):
     """Get list of test bookings. Requires APPOINTMENT_VIEW permission."""
     service = TestBookingsService(db)
@@ -85,7 +85,7 @@ async def update_test_booking(
     data: TestBookingUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("APPOINTMENT_UPDATE"))
+    current_user_id: UUID = Depends(require_module_action("appointments", "update"))
 ):
     """Update a test booking. Requires APPOINTMENT_UPDATE permission."""
     ip_address = get_client_ip(request)
@@ -105,7 +105,7 @@ async def delete_test_booking(
     booking_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("APPOINTMENT_DELETE"))
+    current_user_id: UUID = Depends(require_module_action("appointments", "delete"))
 ):
     """Soft delete a test booking. Requires APPOINTMENT_DELETE permission."""
     ip_address = get_client_ip(request)

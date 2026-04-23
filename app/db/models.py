@@ -42,53 +42,38 @@ class Role(MasterModel):
     description = Column(Text, nullable=True)
 
 
-class Permission(MasterModel):
-    __tablename__ = "M_permissions"
-    code = Column(String(100), nullable=False)
-    description = Column(Text, nullable=True)
-
-
-class RolePermission(MasterModel):
-    __tablename__ = "M_role_permissions"
-    role_id = Column(UUID(as_uuid=True), ForeignKey("M_roles.id"), nullable=False)
-    permission_id = Column(UUID(as_uuid=True), ForeignKey("M_permissions.id"), nullable=False)
-
-
-class MenuTask(MasterModel):
+class AppModule(MasterModel):
     """
-    Admin UI task (screen) — one row per sidebar destination.
+    Application module (feature / screen) for RBAC — see ``ACCESS_AND_ROLES.md``.
 
-    ``code`` matches the frontend admin tab id (e.g. medicines, therapeutic-categories).
+    ``name`` is a stable internal key (e.g. ``orders``, ``roles``); ``display_name`` is UI label.
     """
 
-    __tablename__ = "M_menu_tasks"
+    __tablename__ = "M_modules"
 
-    code = Column(String(100), nullable=False, unique=True)
+    name = Column(String(100), nullable=False, unique=True)
     display_name = Column(String(255), nullable=False)
-    sort_order = Column(Integer, nullable=False, server_default=text("0"))
+    is_menu_item = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    parent_module_id = Column(UUID(as_uuid=True), ForeignKey("M_modules.id"), nullable=True)
+    display_order = Column(Integer, nullable=False, server_default=text("0"))
     icon_key = Column(String(100), nullable=True)
 
 
-class RoleTaskGrant(BaseModel):
+class ModuleRolePermission(MasterModel):
     """
-    Per-role grants for a menu task: CRUD flags and whether the task appears in the sidebar.
-
-    Sidebar entries are returned only when ``show_in_menu`` and ``can_read`` are true.
+    CRUD matrix per role per module — see ``ACCESS_AND_ROLES.md``.
     """
 
-    __tablename__ = "M_role_task_grants"
+    __tablename__ = "M_module_role_permissions"
 
+    module_id = Column(UUID(as_uuid=True), ForeignKey("M_modules.id"), nullable=False)
     role_id = Column(UUID(as_uuid=True), ForeignKey("M_roles.id"), nullable=False)
-    menu_task_id = Column(UUID(as_uuid=True), ForeignKey("M_menu_tasks.id"), nullable=False)
     can_create = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     can_read = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     can_update = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     can_delete = Column(Boolean, nullable=False, default=False, server_default=text("false"))
-    show_in_menu = Column(Boolean, nullable=False, default=False, server_default=text("false"))
 
-    __table_args__ = (
-        UniqueConstraint("role_id", "menu_task_id", name="uq_m_role_task_grants_role_task"),
-    )
+    __table_args__ = (UniqueConstraint("module_id", "role_id", name="uq_m_module_role_permissions_module_role"),)
 
 
 class User(MasterModel):
@@ -165,6 +150,10 @@ class Order(BaseModel):
     final_amount = Column(Numeric(10, 2), nullable=False)
     payment_method = Column(String(50), nullable=False)
     payment_completed_at = Column(DateTime(timezone=True), nullable=True)
+    order_received_at = Column(DateTime(timezone=True), nullable=True)
+    order_packed_at = Column(DateTime(timezone=True), nullable=True)
+    delivery_assigned_at = Column(DateTime(timezone=True), nullable=True)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
     processed_by = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=True)
     notes = Column(Text, nullable=True)
     prescription_path = Column(Text, nullable=True)

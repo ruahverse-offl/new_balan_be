@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.db_connection import get_db
 from app.services.brands_service import BrandsService
 from app.schemas.brands_schema import BrandCreateRequest, BrandUpdateRequest, BrandResponse, BrandListResponse
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/brands", tags=["brands"])
@@ -19,7 +19,7 @@ async def create_brand(
     data: BrandCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_CREATE")),
+    current_user_id: UUID = Depends(require_module_action("medicines", "create")),
 ):
     ip_address = get_client_ip(request)
     service = BrandsService(db)
@@ -61,7 +61,7 @@ async def update_brand(
     data: BrandUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE")),
+    current_user_id: UUID = Depends(require_module_action("medicines", "update")),
 ):
     ip_address = get_client_ip(request)
     service = BrandsService(db)
@@ -79,7 +79,7 @@ async def delete_brand(
     brand_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_DELETE")),
+    current_user_id: UUID = Depends(require_module_action("medicines", "delete")),
 ):
     ip_address = get_client_ip(request)
     service = BrandsService(db)

@@ -57,8 +57,10 @@ async def get_appointment_by_id(
     if current_user_id:
         from app.utils.rbac import RBACService
         rbac_service = RBACService(db)
-        has_permission = await rbac_service.has_permission(current_user_id, "APPOINTMENT_VIEW")
-        if not has_permission and str(appointment.created_by) != str(current_user_id):
+        can_see_all = await rbac_service.has_module_action(
+            current_user_id, "appointments", "read"
+        )
+        if not can_see_all and str(appointment.created_by) != str(current_user_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You can only view your own appointments"
@@ -90,8 +92,10 @@ async def get_appointments_list(
     if current_user_id:
         from app.utils.rbac import RBACService
         rbac_service = RBACService(db)
-        has_permission = await rbac_service.has_permission(current_user_id, "APPOINTMENT_VIEW")
-        if not has_permission:
+        can_see_all = await rbac_service.has_module_action(
+            current_user_id, "appointments", "read"
+        )
+        if not can_see_all:
             user_id_filter = current_user_id
 
     service = AppointmentsService(db)

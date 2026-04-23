@@ -3,8 +3,8 @@ Users Schema
 Pydantic models for users resource
 """
 
-from typing import Optional
-from pydantic import Field, EmailStr
+from typing import List, Optional
+from pydantic import BaseModel, Field, EmailStr
 from datetime import datetime
 from uuid import UUID
 from app.schemas.common import ListResponse, BaseCreateRequest, BaseUpdateRequest, BaseResponse
@@ -80,3 +80,22 @@ class UserResponse(BaseResponse):
 class UserListResponse(ListResponse[UserResponse]):
     """Response model for user list with pagination."""
     pass
+
+
+class DeliveryAgentOption(BaseModel):
+    """User eligible for delivery assignment (role has DELIVERY_ORDER_UPDATE)."""
+
+    id: UUID = Field(..., description="User id to pass as delivery_assigned_user_id")
+    full_name: str = Field(..., description="Display name")
+    mobile_number: str = Field(..., description="Phone for coordination")
+    delivery_status: str = Field(
+        ...,
+        description="Human-readable availability (e.g. Available, On active delivery)",
+    )
+    active_delivery_count: int = Field(0, ge=0, description="Non-terminal assigned orders in delivery pipeline")
+
+
+class DeliveryAgentListResponse(BaseModel):
+    """Users who may be assigned as delivery agents."""
+
+    items: List[DeliveryAgentOption] = Field(default_factory=list)

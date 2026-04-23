@@ -45,3 +45,8 @@ def test_cancel_from_pending_staff_only():
         actor_is_assigned_delivery=False,
     )
     assert not r.ok
+
+
+def test_payment_cancelled_is_terminal():
+    assert lc.is_terminal_status("PAYMENT_CANCELLED")
+    assert lc.PAYMENT_CANCELLED in lc.TERMINAL_STATUSES

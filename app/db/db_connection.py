@@ -90,6 +90,13 @@ class DatabaseConnection:
         return cls._session_factory
 
     @classmethod
+    def get_engine(cls):
+        """Return the async engine (for maintenance scripts after ``initialize()``)."""
+        if cls._engine is None:
+            raise RuntimeError("Database not initialized; call DatabaseConnection.initialize() first")
+        return cls._engine
+
+    @classmethod
     async def is_connected(cls) -> bool:
         """Return True if a simple ``SELECT 1`` succeeds."""
         if cls._engine is None:

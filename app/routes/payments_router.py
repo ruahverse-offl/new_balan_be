@@ -16,7 +16,7 @@ from app.schemas.payments_schema import (
     PaymentResponse,
     PaymentListResponse
 )
-from app.utils.rbac import require_permission, require_any_permission
+from app.utils.rbac import require_module_action, require_any_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/payments", tags=["payments"])
@@ -27,7 +27,7 @@ async def create_payment(
     data: PaymentCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("PAYMENT_PROCESS"))
+    current_user_id: UUID = Depends(require_module_action("payments", "update"))
 ):
     """Create a new payment."""
     ip_address = get_client_ip(request)
@@ -40,7 +40,7 @@ async def create_payment(
 async def get_payment_by_id(
     payment_id: UUID,
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_any_permission(["PAYMENT_PROCESS", "ORDER_VIEW"]))
+    _: UUID = Depends(require_any_module_action([("payments", "update"), ("orders", "read")]))
 ):
     """Get payment by ID. Allowed for PAYMENT_PROCESS or ORDER_VIEW (e.g. staff viewing payments)."""
     service = PaymentsService(db)
@@ -61,7 +61,7 @@ async def get_payments_list(
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_any_permission(["PAYMENT_PROCESS", "ORDER_VIEW"]))
+    _: UUID = Depends(require_any_module_action([("payments", "update"), ("orders", "read")]))
 ):
     """Get list of payments. Allowed for PAYMENT_PROCESS or ORDER_VIEW (so staff with order view can see payments)."""
     service = PaymentsService(db)
@@ -77,7 +77,7 @@ async def update_payment(
     data: PaymentUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("PAYMENT_PROCESS"))
+    current_user_id: UUID = Depends(require_module_action("payments", "update"))
 ):
     """Update a payment."""
     ip_address = get_client_ip(request)
@@ -96,7 +96,7 @@ async def delete_payment(
     payment_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("PAYMENT_PROCESS"))
+    current_user_id: UUID = Depends(require_module_action("payments", "update"))
 ):
     """Soft delete a payment."""
     ip_address = get_client_ip(request)

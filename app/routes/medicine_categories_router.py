@@ -13,7 +13,7 @@ from app.schemas.medicine_categories_schema import (
     MedicineCategoryResponse,
     MedicineCategoryListResponse,
 )
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/medicine-categories", tags=["medicine-categories"])
@@ -24,7 +24,7 @@ async def create_medicine_category(
     data: MedicineCategoryCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_CATEGORY_MANAGE")),
+    current_user_id: UUID = Depends(require_module_action("therapeutic-categories", "update")),
 ):
     ip_address = get_client_ip(request)
     service = MedicineCategoriesService(db)
@@ -59,7 +59,7 @@ async def update_medicine_category(
     data: MedicineCategoryUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_CATEGORY_MANAGE")),
+    current_user_id: UUID = Depends(require_module_action("therapeutic-categories", "update")),
 ):
     ip_address = get_client_ip(request)
     service = MedicineCategoriesService(db)
@@ -74,7 +74,7 @@ async def delete_medicine_category(
     category_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_CATEGORY_MANAGE")),
+    current_user_id: UUID = Depends(require_module_action("therapeutic-categories", "update")),
 ):
     ip_address = get_client_ip(request)
     service = MedicineCategoriesService(db)

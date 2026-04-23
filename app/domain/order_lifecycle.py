@@ -12,6 +12,9 @@ from typing import FrozenSet, Optional, Set, Tuple
 # Payment not completed (Razorpay / checkout created, not verified yet)
 PAYMENT_PENDING = "PENDING"
 
+# Customer closed checkout or payment failed without capture (terminal)
+PAYMENT_CANCELLED = "PAYMENT_CANCELLED"
+
 # Staff queue (paid or placed for fulfillment)
 ORDER_RECEIVED = "ORDER_RECEIVED"
 ORDER_TAKEN = "ORDER_TAKEN"
@@ -31,6 +34,7 @@ REFUNDED = "REFUNDED"
 ALL_STATUSES: FrozenSet[str] = frozenset(
     {
         PAYMENT_PENDING,
+        PAYMENT_CANCELLED,
         ORDER_RECEIVED,
         ORDER_TAKEN,
         ORDER_PROCESSING,
@@ -62,7 +66,14 @@ DELIVERY_TRANSITIONS: dict[str, Set[str]] = {
 }
 
 TERMINAL_STATUSES: FrozenSet[str] = frozenset(
-    {DELIVERED, CANCELLED_BY_STAFF, DELIVERY_RETURNED, REFUND_INITIATED, REFUNDED}
+    {
+        PAYMENT_CANCELLED,
+        DELIVERED,
+        CANCELLED_BY_STAFF,
+        DELIVERY_RETURNED,
+        REFUND_INITIATED,
+        REFUNDED,
+    }
 )
 
 

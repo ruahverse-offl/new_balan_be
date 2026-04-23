@@ -7,8 +7,6 @@ from fastapi import APIRouter
 
 # Import all routers
 from app.routes.roles_router import router as roles_router
-from app.routes.permissions_router import router as permissions_router
-from app.routes.role_permissions_router import router as role_permissions_router
 from app.routes.users_router import router as users_router
 from app.routes.medicine_categories_router import router as medicine_categories_router
 from app.routes.brands_router import router as brands_router
@@ -16,9 +14,6 @@ from app.routes.medicines_router import router as medicines_router
 from app.routes.medicine_brands_router import router as medicine_brands_router
 from app.routes.orders_router import router as orders_router
 from app.routes.payments_router import router as payments_router
-
-# Import KPI router (replaces legacy dashboard APIs)
-from app.routes.kpi_router import router as kpi_router
 
 # Import new routers (Clinic & Polyclinic)
 from app.routes.doctors_router import router as doctors_router
@@ -37,14 +32,14 @@ from app.routes.razorpay_router import router as razorpay_router
 from app.routes.addresses_router import router as addresses_router
 from app.routes.upload_router import router as upload_router
 from app.routes.inventory_router import router as inventory_router
+from app.routes.modules_router import router as modules_router
+from app.routes.rbac_matrix_router import router as rbac_matrix_router
 
 # Create main API router
 api_router = APIRouter()
 
 # Include all routers
 api_router.include_router(roles_router)
-api_router.include_router(permissions_router)
-api_router.include_router(role_permissions_router)
 api_router.include_router(users_router)
 api_router.include_router(medicine_categories_router)
 api_router.include_router(brands_router)
@@ -52,8 +47,6 @@ api_router.include_router(medicines_router)
 api_router.include_router(medicine_brands_router)
 api_router.include_router(orders_router)
 api_router.include_router(payments_router)
-
-api_router.include_router(kpi_router)
 
 # Include new routers (Clinic & Polyclinic)
 api_router.include_router(doctors_router)
@@ -72,12 +65,12 @@ api_router.include_router(razorpay_router)
 api_router.include_router(addresses_router)
 api_router.include_router(upload_router)
 api_router.include_router(inventory_router)
+api_router.include_router(modules_router)
+api_router.include_router(rbac_matrix_router)
 
 __all__ = [
     "api_router",
     "roles_router",
-    "permissions_router",
-    "role_permissions_router",
     "users_router",
     "medicine_categories_router",
     "brands_router",
@@ -98,4 +91,6 @@ __all__ = [
     "addresses_router",
     "upload_router",
     "inventory_router",
+    "modules_router",
+    "rbac_matrix_router",
 ]

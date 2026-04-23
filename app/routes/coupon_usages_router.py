@@ -15,7 +15,7 @@ from app.schemas.coupon_usages_schema import (
     CouponUsageResponse,
     CouponUsageListResponse
 )
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action, require_any_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/coupon-usages", tags=["coupon-usages"])
@@ -26,7 +26,9 @@ async def create_coupon_usage(
     data: CouponUsageCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("COUPON_CREATE"))
+    current_user_id: UUID = Depends(
+        require_any_module_action([("coupon-usages", "create"), ("coupons", "create")])
+    )
 ):
     """Create a new coupon usage."""
     ip_address = get_client_ip(request)
@@ -39,7 +41,7 @@ async def create_coupon_usage(
 async def get_coupon_usage_by_id(
     usage_id: UUID,
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_permission("COUPON_VIEW"))
+    _: UUID = Depends(require_any_module_action([("coupon-usages", "read"), ("coupons", "read")]))
 ):
     """Get coupon usage by ID."""
     service = CouponUsagesService(db)
@@ -63,7 +65,7 @@ async def get_coupon_usages_list(
     order_id: Optional[UUID] = Query(default=None),
     customer_id: Optional[UUID] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_permission("COUPON_VIEW"))
+    _: UUID = Depends(require_any_module_action([("coupon-usages", "read"), ("coupons", "read")]))
 ):
     """Get list of coupon usages with pagination, search, and sort."""
     service = CouponUsagesService(db)

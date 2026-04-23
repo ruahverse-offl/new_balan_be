@@ -15,7 +15,7 @@ from app.schemas.medicine_brands_schema import (
     MedicineBrandUpdateRequest,
     MedicineBrandResponse,
 )
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/medicine-brands", tags=["medicine-brands"])
@@ -26,7 +26,7 @@ async def create_medicine_brand(
     data: MedicineBrandCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_CREATE")),
+    current_user_id: UUID = Depends(require_module_action("medicines", "create")),
 ):
     """Create a new medicine brand."""
     ip_address = get_client_ip(request)
@@ -44,7 +44,7 @@ async def update_medicine_brand(
     data: MedicineBrandUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_UPDATE")),
+    current_user_id: UUID = Depends(require_module_action("medicines", "update")),
 ):
     """Update a medicine brand."""
     ip_address = get_client_ip(request)
@@ -66,7 +66,7 @@ async def delete_medicine_brand(
     brand_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("MEDICINE_DELETE")),
+    current_user_id: UUID = Depends(require_module_action("medicines", "delete")),
 ):
     """Soft delete a medicine brand."""
     ip_address = get_client_ip(request)

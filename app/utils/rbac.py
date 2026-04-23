@@ -1,238 +1,214 @@
 """
-RBAC (Role-Based Access Control) Utilities
-Permission checking dependencies and service for FastAPI
+RBAC — ``M_modules`` + ``M_module_role_permissions`` (see ``ACCESS_AND_ROLES.md``).
+
+Route guards use :func:`require_module_action` (module + CRUD) against the matrix.
+The SPA uses ``menuItems[].grants`` from ``GET /api/v1/auth/me/permissions`` (no
+separate string permission list).
 """
 
-from typing import Any, Callable, Dict, List, Optional, Set
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 from uuid import UUID
+
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.db_connection import get_db
-from app.db.models import User, Role, Permission, RolePermission, MenuTask, RoleTaskGrant
+from app.db.models import AppModule, ModuleRolePermission, Role, User
 from app.utils.auth import get_current_user_id
+
+logger = logging.getLogger(__name__)
+
+# CRUD action for :meth:`RBACService.has_module_action` / :func:`require_module_action`.
+Action = Literal["read", "create", "update", "delete"]
 
 
 class RBACService:
-    """Service for role-based access control operations."""
-
-    # Sidebar task code -> permission codes that can unlock it (any-of).
-    # Keeps sidebar visibility aligned with API authorization behavior.
-    MENU_TASK_PERMISSION_MAP: Dict[str, Set[str]] = {
-        "dashboard": {"DASHBOARD_VIEW", "DASHBOARD_ANALYTICS"},
-        "roles-access": {
-            "ROLE_VIEW",
-            "ROLE_CREATE",
-            "ROLE_UPDATE",
-            "ROLE_DELETE",
-            "PERMISSION_VIEW",
-            "PERMISSION_CREATE",
-            "PERMISSION_UPDATE",
-            "PERMISSION_DELETE",
-            "ROLE_PERMISSION_VIEW",
-            "ROLE_PERMISSION_CREATE",
-            "ROLE_PERMISSION_UPDATE",
-            "ROLE_PERMISSION_DELETE",
-        },
-        "doctors": {"DOCTOR_VIEW"},
-        "medicines": {"MEDICINE_VIEW"},
-        "therapeutic-categories": {"MEDICINE_VIEW", "MEDICINE_CATEGORY_MANAGE"},
-        "inventory": {"INVENTORY_VIEW"},
-        "brand-master": {"MEDICINE_VIEW"},
-        "orders": {"ORDER_VIEW"},
-        "delivery-orders": {"DELIVERY_ORDER_VIEW", "DELIVERY_ORDER_UPDATE"},
-        "appointments": {"APPOINTMENT_VIEW"},
-        "delivery": {"DELIVERY_SETTINGS_VIEW"},
-        "coupons": {"COUPON_VIEW"},
-        "staff": {"STAFF_VIEW"},
-        "test-bookings": {"APPOINTMENT_VIEW"},
-        "payments": {"ORDER_VIEW", "PAYMENT_PROCESS"},
-        "coupon-usages": {"COUPON_VIEW"},
-    }
+    """Role-based access: ``M_modules`` + ``M_module_role_permissions``."""
 
     def __init__(self, session: AsyncSession):
         self.session = session
 
     async def get_user_role(self, user_id: UUID) -> Optional[Role]:
-        """Get the Role object for a user."""
         stmt = (
             select(Role)
             .join(User, User.role_id == Role.id)
             .where(User.id == user_id)
-            .where(User.is_deleted == False)
+            .where(User.is_deleted == False)  # noqa: E712
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def has_permission(self, user_id: UUID, permission_code: str) -> bool:
-        """Check if a user's role has the given permission code."""
-        stmt = (
-            select(Permission.code)
-            .join(RolePermission, RolePermission.permission_id == Permission.id)
-            .join(User, User.role_id == RolePermission.role_id)
-            .where(User.id == user_id)
-            .where(User.is_deleted == False)
-            .where(Permission.code == permission_code)
-            .where(Permission.is_deleted == False)
-            .where(RolePermission.is_deleted == False)
-        )
-        result = await self.session.execute(stmt)
-        return result.scalar_one_or_none() is not None
-
-    async def get_user_permissions(self, user_id: UUID) -> List[str]:
-        """Get all permission codes for a user's role."""
-        stmt = (
-            select(Permission.code)
-            .join(RolePermission, RolePermission.permission_id == Permission.id)
-            .join(User, User.role_id == RolePermission.role_id)
-            .where(User.id == user_id)
-            .where(User.is_deleted == False)
-            .where(Permission.is_deleted == False)
-            .where(RolePermission.is_deleted == False)
-        )
-        result = await self.session.execute(stmt)
-        return list(result.scalars().all())
-
-    async def get_sidebar_menu_items(self, user_id: UUID) -> List[Dict[str, Any]]:
+    async def has_module_action(self, user_id: UUID, module_name: str, action: Action) -> bool:
         """
-        Return menu tasks visible in the admin sidebar for this user.
+        Authoritative matrix check: resolve the user's ``role_id`` from ``M_users``,
+        load the row in ``M_module_role_permissions`` for that ``role_id`` and the
+        ``M_modules`` row where ``name == module_name``, then allow the request only
+        if the flag for the action is true: ``create`` → ``can_create``, ``read`` →
+        ``can_read``, ``update`` → ``can_update``, ``delete`` → ``can_delete``.
 
-        Rows come from ``role_task_grants`` joined to ``menu_tasks`` for the user's role.
-        Included only when ``show_in_menu`` and ``can_read`` are true and rows are not deleted.
-
-        Returns:
-            List of dicts with keys: code, display_name, sort_order, icon_key (optional).
+        If there is no matrix row, or the row or module is inactive, returns ``False``.
         """
         stmt = (
             select(
-                MenuTask.code,
-                MenuTask.display_name,
-                MenuTask.sort_order,
-                MenuTask.icon_key,
+                ModuleRolePermission.can_create,
+                ModuleRolePermission.can_read,
+                ModuleRolePermission.can_update,
+                ModuleRolePermission.can_delete,
             )
-            .join(RoleTaskGrant, RoleTaskGrant.menu_task_id == MenuTask.id)
-            .join(User, User.role_id == RoleTaskGrant.role_id)
-            .where(User.id == user_id)
-            .where(User.is_deleted == False)
-            .where(MenuTask.is_deleted == False)
-            .where(MenuTask.is_active == True)
-            .where(RoleTaskGrant.is_deleted == False)
-            .where(RoleTaskGrant.show_in_menu == True)
-            .where(RoleTaskGrant.can_read == True)
-            .order_by(MenuTask.sort_order.asc(), MenuTask.display_name.asc())
+            .select_from(ModuleRolePermission)
+            .join(User, User.role_id == ModuleRolePermission.role_id)
+            .join(AppModule, AppModule.id == ModuleRolePermission.module_id)
+            .join(Role, Role.id == User.role_id)
+            .where(
+                User.id == user_id,
+                User.is_deleted == False,  # noqa: E712
+                User.is_active == True,  # noqa: E712
+                Role.is_deleted == False,  # noqa: E712
+                Role.is_active == True,  # noqa: E712
+                AppModule.name == module_name,
+                AppModule.is_deleted == False,  # noqa: E712
+                AppModule.is_active == True,  # noqa: E712
+                ModuleRolePermission.is_deleted == False,  # noqa: E712
+                ModuleRolePermission.is_active == True,  # noqa: E712
+            )
+        )
+        row = (await self.session.execute(stmt)).first()
+        if not row:
+            return False
+        c, r, u, d = bool(row[0]), bool(row[1]), bool(row[2]), bool(row[3])
+        a = (action or "").lower()
+        if a == "read":
+            return r
+        if a == "create":
+            return c
+        if a == "update":
+            return u
+        if a == "delete":
+            return d
+        return False
+
+    async def get_sidebar_menu_items(self, user_id: UUID) -> List[Dict[str, Any]]:
+        """
+        Menu entries from modules where ``is_menu_item`` and role has ``can_read``.
+
+        Each item includes ``grants`` (``can_create``, ``can_read``, ``can_update``,
+        ``can_delete``) for that module and the user's role.
+
+        Storefront roles (**PUBLIC**, **CUSTOMER**) get an empty list so matrix rows
+        used for catalog/checkout APIs do not surface admin sidebar tabs.
+        """
+        role = await self.get_user_role(user_id)
+        if role and str(role.name or "").upper() in ("PUBLIC", "CUSTOMER"):
+            return []
+
+        stmt = (
+            select(
+                AppModule.name,
+                AppModule.display_name,
+                AppModule.display_order,
+                AppModule.icon_key,
+                ModuleRolePermission.can_create,
+                ModuleRolePermission.can_read,
+                ModuleRolePermission.can_update,
+                ModuleRolePermission.can_delete,
+            )
+            .select_from(AppModule)
+            .join(ModuleRolePermission, ModuleRolePermission.module_id == AppModule.id)
+            .join(User, User.role_id == ModuleRolePermission.role_id)
+            .where(
+                User.id == user_id,
+                User.is_deleted == False,  # noqa: E712
+                AppModule.is_menu_item == True,  # noqa: E712
+                AppModule.is_deleted == False,  # noqa: E712
+                AppModule.is_active == True,  # noqa: E712
+                ModuleRolePermission.can_read == True,  # noqa: E712
+                ModuleRolePermission.is_deleted == False,  # noqa: E712
+                ModuleRolePermission.is_active == True,  # noqa: E712
+            )
+            .order_by(AppModule.display_order.asc(), AppModule.display_name.asc())
         )
         result = await self.session.execute(stmt)
-        rows = result.all()
-        effective_permissions = set(await self.get_user_permissions(user_id))
-
-        items = [
-            {
-                "code": r.code,
-                "display_name": r.display_name,
-                "sort_order": r.sort_order,
-                "icon_key": r.icon_key,
-            }
-            for r in rows
-        ]
-        filtered_items: List[Dict[str, Any]] = []
-        for item in items:
-            code = str(item.get("code") or "").strip().lower()
-            required = self.MENU_TASK_PERMISSION_MAP.get(code)
-            # If menu code is unknown to this map, keep existing grant behavior.
-            if not required or required.intersection(effective_permissions):
-                filtered_items.append(item)
-
-        # Permission-derived sidebar: if a role has permission for a known task,
-        # include that task even when RoleTaskGrant row is missing.
-        # This keeps menu visibility in sync with effective API permissions.
-        permission_allowed_codes = {
-            code
-            for code, required in self.MENU_TASK_PERMISSION_MAP.items()
-            if required.intersection(effective_permissions)
-        }
-        existing_codes = {str(item.get("code") or "").strip().lower() for item in filtered_items}
-        missing_codes = permission_allowed_codes.difference(existing_codes)
-        if missing_codes:
-            fallback_stmt = (
-                select(
-                    MenuTask.code,
-                    MenuTask.display_name,
-                    MenuTask.sort_order,
-                    MenuTask.icon_key,
+        items: List[Dict[str, Any]] = []
+        seen: Set[str] = set()
+        for (
+            name,
+            display_name,
+            display_order_val,
+            icon_key,
+            can_create,
+            can_read,
+            can_update,
+            can_delete,
+        ) in result.all():
+            code = str(name or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            items.append(
+                {
+                    "code": code,
+                    "display_name": display_name,
+                    "display_order": int(display_order_val or 0),
+                    "icon_key": icon_key,
+                    "grants": {
+                        "can_create": bool(can_create),
+                        "can_read": bool(can_read),
+                        "can_update": bool(can_update),
+                        "can_delete": bool(can_delete),
+                    },
+                }
+            )
+        if not items and role:
+            rname = str(role.name or "").upper()
+            if rname not in ("PUBLIC", "CUSTOMER"):
+                logger.warning(
+                    "Empty menu_items for user_id=%s role=%s (no M_module_role_permissions with "
+                    "can_read). From new_balan_be run: python Scripts/seed_demo_data.py --repair-rbac",
+                    user_id,
+                    rname,
                 )
-                .where(MenuTask.is_deleted == False)
-                .where(MenuTask.is_active == True)
-            )
-            fallback_result = await self.session.execute(fallback_stmt)
-            for row in fallback_result.all():
-                code = str(row.code or "").strip().lower()
-                if code in missing_codes:
-                    filtered_items.append(
-                        {
-                            "code": row.code,
-                            "display_name": row.display_name,
-                            "sort_order": row.sort_order,
-                            "icon_key": row.icon_key,
-                        }
-                    )
-
-        filtered_items.sort(
-            key=lambda item: (
-                int(item.get("sort_order") or 0),
-                str(item.get("display_name") or "").lower(),
-            )
-        )
-        return filtered_items
+        return items
 
 
-def require_permission(permission_code: str) -> Callable:
+def require_module_action(module_name: str, action: Action) -> Callable:
     """
-    FastAPI dependency factory that checks if the current user has a specific permission.
-
-    Returns the user's UUID if authorized, raises 403 if not.
+    FastAPI dependency: current user must have ``action`` on ``M_modules.name`` in
+    ``M_module_role_permissions`` (see :meth:`RBACService.has_module_action`).
     """
+
     async def permission_dependency(
         current_user_id: UUID = Depends(get_current_user_id),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> UUID:
         rbac_service = RBACService(db)
-        has_perm = await rbac_service.has_permission(current_user_id, permission_code)
-        if not has_perm:
+        if not await rbac_service.has_module_action(current_user_id, module_name, action):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: {permission_code} required"
+                detail=f"Permission denied: {module_name}:{action} required",
             )
         return current_user_id
 
     return permission_dependency
 
 
-def require_any_permission(permission_codes: List[str]) -> Callable:
-    """
-    FastAPI dependency factory that checks if the current user has at least one of the given permissions.
+def require_any_module_action(options: List[Tuple[str, Action]]) -> Callable:
+    """Require at least one (module_name, action) pair on the matrix."""
 
-    Returns the user's UUID if authorized, raises 403 if not.
-    """
     async def permission_dependency(
         current_user_id: UUID = Depends(get_current_user_id),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
     ) -> UUID:
         rbac_service = RBACService(db)
-        for code in permission_codes:
-            if await rbac_service.has_permission(current_user_id, code):
+        for mod, act in options:
+            if await rbac_service.has_module_action(current_user_id, mod, act):
                 return current_user_id
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Permission denied: one of {permission_codes} required"
+            detail="Permission denied: required module access missing",
         )
+
     return permission_dependency
-
-
-async def get_user_permissions_dependency(
-    current_user_id: UUID = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db)
-) -> List[str]:
-    """FastAPI dependency that returns a list of permission codes for the current user."""
-    rbac_service = RBACService(db)
-    return await rbac_service.get_user_permissions(current_user_id)

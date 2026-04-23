@@ -17,7 +17,7 @@ from app.schemas.inventory_schema import (
 )
 from app.services import inventory_service
 from app.utils.auth import get_current_user_id
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
@@ -54,7 +54,7 @@ async def list_inventory_alerts(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
-    _current_user_id: UUID = Depends(require_permission("INVENTORY_VIEW")),
+    _current_user_id: UUID = Depends(require_module_action("inventory", "read")),
 ):
     """Active low-stock alerts (medicine under brand below threshold)."""
     items = await inventory_service.list_alerts_with_labels(db, limit=limit, offset=offset)
@@ -70,7 +70,7 @@ async def update_offering_stock(
     data: InventoryStockUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("INVENTORY_UPDATE")),
+    current_user_id: UUID = Depends(require_module_action("inventory", "update")),
 ):
     """Set absolute stock for a medicine–brand offering (refill / correction). Removes alert when above threshold."""
     ip = get_client_ip(request)

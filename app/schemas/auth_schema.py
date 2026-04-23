@@ -17,7 +17,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=6)
     full_name: str = Field(..., min_length=1)
     mobile_number: str = Field(..., min_length=10, max_length=15)
-    # role_id is ignored: signup always assigns CUSTOMER role and only customer permissions
+    # role_id is ignored: signup assigns PUBLIC (preferred) or legacy CUSTOMER — end-customer roles for logged-in checkout
 
 
 class UserAuthResponse(BaseModel):

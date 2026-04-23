@@ -5,7 +5,7 @@ Handles payment initiation, verification, status check, and refunds.
 
 import json
 import logging
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Any
 from uuid import UUID, uuid4
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
@@ -28,7 +28,7 @@ from app.db.models import (
     User,
 )
 from app.utils.auth import get_current_user_id
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 from app.config import get_settings
 from app.services.razorpay_service import (
@@ -38,6 +38,7 @@ from app.services.razorpay_service import (
     process_refund,
 )
 from app.services import inventory_service
+from app.domain import order_lifecycle as lc
 from app.db.models import DeliverySetting
 from app.utils.delivery_pricing import delivery_fee_for_subtotal
 from app.utils.delivery_windows import (
@@ -299,6 +300,29 @@ class VerifyPaymentRequest(BaseModel):
     razorpay_payment_id: str = Field(..., description="Razorpay payment ID from checkout")
     razorpay_order_id: str = Field(..., description="Razorpay order ID")
     razorpay_signature: str = Field(..., description="Razorpay signature from checkout")
+
+
+class CheckoutOutcomeRequest(BaseModel):
+    """Report Razorpay checkout closed or payment.failed (customer-owned PENDING orders only)."""
+
+    order_id: str = Field(..., description="Our order UUID (from initiate response)")
+    outcome: Literal["abandoned", "failed"] = Field(
+        ...,
+        description="abandoned = modal dismissed without pay; failed = gateway payment.failed",
+    )
+    razorpay_payment_id: Optional[str] = Field(
+        None,
+        description="Razorpay payment id from failure payload when present",
+    )
+    error_description: Optional[str] = Field(None, max_length=1000, description="Human-readable error from checkout")
+
+
+class CheckoutOutcomeResponse(BaseModel):
+    order_id: str
+    order_status: str
+    payment_status: str
+    refund_initiated: bool = False
+    message: str
 
 
 class PaymentStatusResponse(BaseModel):
@@ -877,6 +901,7 @@ async def mock_complete_payment(
             .values(
                 order_status="ORDER_RECEIVED",
                 payment_completed_at=now_ist,
+                order_received_at=now_ist,
                 updated_by=current_user_id,
                 updated_ip=ip_address,
             )
@@ -895,6 +920,184 @@ async def mock_complete_payment(
         amount=float(payment.amount),
         transaction_id=mock_txn_id,
         order_status="ORDER_RECEIVED",
+    )
+
+
+def _rzpay_payment_captured(pr: dict[str, Any]) -> bool:
+    """True when Razorpay reports funds captured (refund may be required on failed checkout)."""
+    if not pr:
+        return False
+    st = str(pr.get("status") or "").lower()
+    if st == "captured":
+        return True
+    if st == "authorized":
+        cap = pr.get("captured")
+        if cap is True or cap == 1 or str(cap).lower() in ("true", "1"):
+            return True
+    return False
+
+
+@router.post("/checkout-outcome", response_model=CheckoutOutcomeResponse)
+async def report_checkout_outcome(
+    data: CheckoutOutcomeRequest,
+    _request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+):
+    """
+    Record checkout abandonment or Razorpay payment.failed for a PENDING order.
+
+    - No capture: order -> PAYMENT_CANCELLED, payment -> FAILED.
+    - Captured funds: initiate Razorpay refund; order -> REFUND_INITIATED when refund API succeeds.
+    Mock-initiated orders (gateway_order_id mock_*) never call Razorpay fetch/refund.
+    """
+    try:
+        order_uuid = UUID(data.order_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order ID format.")
+
+    ip_address = get_client_ip(request)
+    now_ist = datetime.now(IST)
+
+    result = await db.execute(
+        select(Payment, Order).join(Order, Payment.order_id == Order.id).where(Order.id == order_uuid)
+    )
+    row = result.first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order or payment not found.")
+    payment, order = row
+
+    if order.customer_id and order.customer_id != current_user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not own this order.")
+
+    if lc.normalize_order_status(order.order_status) != lc.PAYMENT_PENDING:
+        return CheckoutOutcomeResponse(
+            order_id=str(order.id),
+            order_status=order.order_status,
+            payment_status=payment.payment_status,
+            refund_initiated=False,
+            message="Order is not awaiting checkout; no change applied.",
+        )
+
+    if payment.payment_status == "SUCCESS":
+        return CheckoutOutcomeResponse(
+            order_id=str(order.id),
+            order_status=order.order_status,
+            payment_status=payment.payment_status,
+            refund_initiated=False,
+            message="Payment already succeeded.",
+        )
+
+    reason = (data.error_description or "").strip()
+    if data.outcome == "abandoned":
+        reason = reason or "Checkout closed without completing payment."
+    elif data.outcome == "failed":
+        reason = reason or "Payment failed at gateway."
+
+    is_mock = bool(payment.gateway_order_id) and str(payment.gateway_order_id).startswith("mock_")
+
+    captured = False
+    rz_payment: dict[str, Any] | None = None
+    if not is_mock and data.razorpay_payment_id and settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET:
+        rz_payment = fetch_payment(data.razorpay_payment_id) or {}
+        captured = _rzpay_payment_captured(rz_payment)
+
+    if captured and not is_mock and data.razorpay_payment_id:
+        try:
+            refund_response = process_refund(data.razorpay_payment_id, None)
+            refund_id = str(refund_response.get("id") or uuid4().hex[:14])
+            refund_status = "COMPLETED" if refund_response.get("status") == "processed" else "INITIATED"
+            order_status = "REFUNDED" if refund_status == "COMPLETED" else "REFUND_INITIATED"
+            await db.execute(
+                sa_update(Payment)
+                .where(Payment.id == payment.id)
+                .values(
+                    payment_status="SUCCESS",
+                    gateway_transaction_id=data.razorpay_payment_id,
+                    refund_status=refund_status,
+                    refund_amount=payment.amount,
+                    refund_transaction_id=refund_id,
+                    gateway_response=json.dumps(
+                        {"checkout_outcome": data.outcome, "refund": refund_response},
+                        default=str,
+                    ),
+                    payment_date=now_ist,
+                    updated_by=current_user_id,
+                    updated_ip=ip_address,
+                )
+            )
+            await db.execute(
+                sa_update(Order)
+                .where(Order.id == order.id)
+                .values(
+                    order_status=order_status,
+                    cancellation_reason=reason[:2000],
+                    cancelled_by_user_id=current_user_id,
+                    cancelled_at=now_ist,
+                    updated_by=current_user_id,
+                    updated_ip=ip_address,
+                )
+            )
+            await db.commit()
+            logger.info(
+                "Checkout outcome refund — order=%s payment_id=%s status=%s",
+                order.id,
+                data.razorpay_payment_id,
+                order_status,
+            )
+            return CheckoutOutcomeResponse(
+                order_id=str(order.id),
+                order_status=order_status,
+                payment_status="SUCCESS",
+                refund_initiated=True,
+                message="Payment had settled; refund was initiated automatically.",
+            )
+        except Exception as e:
+            await db.rollback()
+            logger.error("Checkout outcome refund failed order=%s: %s", order.id, e, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not complete automatic refund. Please contact support with your order reference.",
+            )
+
+    # No capture, or mock, or missing keys / payment id — mark cancelled
+    await db.execute(
+        sa_update(Payment)
+        .where(Payment.id == payment.id)
+        .values(
+            payment_status="FAILED",
+            gateway_response=json.dumps(
+                {
+                    "checkout_outcome": data.outcome,
+                    "error_description": reason,
+                    "razorpay_snapshot": rz_payment,
+                },
+                default=str,
+            ),
+            updated_by=current_user_id,
+            updated_ip=ip_address,
+        )
+    )
+    await db.execute(
+        sa_update(Order)
+        .where(Order.id == order.id)
+        .values(
+            order_status=lc.PAYMENT_CANCELLED,
+            cancellation_reason=reason[:2000],
+            cancelled_by_user_id=current_user_id,
+            cancelled_at=now_ist,
+            updated_by=current_user_id,
+            updated_ip=ip_address,
+        )
+    )
+    await db.commit()
+    logger.info("Checkout outcome cancelled — order=%s outcome=%s", order.id, data.outcome)
+    return CheckoutOutcomeResponse(
+        order_id=str(order.id),
+        order_status=lc.PAYMENT_CANCELLED,
+        payment_status="FAILED",
+        refund_initiated=False,
+        message="Order cancelled — no successful payment was recorded.",
     )
 
 
@@ -968,6 +1171,7 @@ async def verify_razorpay_payment(
             .values(
                 order_status="ORDER_RECEIVED",
                 payment_completed_at=now_ist,
+                order_received_at=now_ist,
                 updated_by=current_user_id,
                 updated_ip=ip_address,
             )
@@ -1032,7 +1236,7 @@ async def refund_payment(
     data: RefundRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("PAYMENT_PROCESS")),
+    current_user_id: UUID = Depends(require_module_action("payments", "update")),
 ):
     """Initiate a refund for a paid order. Admin only."""
     try:

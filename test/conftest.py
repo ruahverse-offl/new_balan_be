@@ -24,10 +24,10 @@ TEST_AUTH_USER_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 def _grant_all_permissions(monkeypatch):
     """RBAC checks hit the DB; short-circuit so tests need not seed role_permissions."""
 
-    async def _always(self, user_id: UUID, permission_code: str) -> bool:
+    async def _always(self, user_id: UUID, module_name: str, action: str) -> bool:
         return True
 
-    monkeypatch.setattr(RBACService, "has_permission", _always)
+    monkeypatch.setattr(RBACService, "has_module_action", _always)
 
 
 @pytest.fixture(scope="session")

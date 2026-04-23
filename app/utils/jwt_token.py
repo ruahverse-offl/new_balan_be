@@ -10,16 +10,32 @@ from fastapi import HTTPException, status
 from app.config import get_settings
 
 
-def create_access_token(user_id: UUID, email: str, role_id: UUID) -> str:
-    """Create a JWT access token."""
+def create_access_token(
+    user_id: UUID,
+    email: str,
+    role_id: UUID,
+    role_name: str,
+) -> str:
+    """
+    Create a JWT access token.
+
+    Claims include: ``sub`` (user id, standard), ``user_id``, ``username`` (login
+    identifier; same as ``email`` when the app has no separate username column),
+    ``email``, ``role_id``, ``role_name``, plus ``type`` and ``exp``.
+    """
     settings = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    uid = str(user_id)
+    rid = str(role_id)
     payload = {
-        "sub": str(user_id),
+        "sub": uid,
+        "user_id": uid,
+        "username": email,
         "email": email,
-        "role_id": str(role_id),
+        "role_id": rid,
+        "role_name": role_name or "",
         "type": "access",
-        "exp": expire
+        "exp": expire,
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 

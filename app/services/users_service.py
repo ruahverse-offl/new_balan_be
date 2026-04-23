@@ -3,18 +3,23 @@ Users Service
 Business logic layer for users
 """
 
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, select
 from fastapi import HTTPException, status
 import logging
 
 from app.repositories.users_repository import UsersRepository
+from app.db.models import User, Order, AppModule, ModuleRolePermission
+from app.domain import order_lifecycle as lc
 from app.schemas.users_schema import (
     UserCreateRequest,
     UserUpdateRequest,
     UserResponse,
-    UserListResponse
+    UserListResponse,
+    DeliveryAgentOption,
+    DeliveryAgentListResponse,
 )
 from app.schemas.common import PaginationResponse
 from app.services.base_service import BaseService
@@ -58,6 +63,68 @@ class UsersService(BaseService):
         user_dict = self._model_to_dict(user)
         return UserResponse(**user_dict)
     
+    async def list_delivery_agents_for_assignment(self) -> DeliveryAgentListResponse:
+        """
+        Return active users whose role can update the ``delivery-orders`` module
+        (legacy: DELIVERY_ORDER_UPDATE), with a short workload summary for assignment UI.
+        """
+        stmt = (
+            select(User.id, User.full_name, User.mobile_number)
+            .join(ModuleRolePermission, ModuleRolePermission.role_id == User.role_id)
+            .join(AppModule, AppModule.id == ModuleRolePermission.module_id)
+            .where(
+                User.is_deleted == False,  # noqa: E712
+                User.is_active == True,
+                ModuleRolePermission.is_deleted == False,  # noqa: E712
+                ModuleRolePermission.can_update == True,  # noqa: E712
+                AppModule.is_deleted == False,  # noqa: E712
+                AppModule.name == "delivery-orders",
+            )
+            .distinct()
+            .order_by(User.full_name.asc())
+        )
+        rows = (await self.session.execute(stmt)).all()
+        if not rows:
+            return DeliveryAgentListResponse(items=[])
+
+        agent_ids = [r[0] for r in rows]
+        active_statuses = (
+            lc.DELIVERY_ASSIGNED,
+            lc.PARCEL_TAKEN,
+            lc.OUT_FOR_DELIVERY,
+        )
+        cnt_stmt = (
+            select(Order.delivery_assigned_user_id, func.count().label("c"))
+            .where(
+                Order.delivery_assigned_user_id.in_(agent_ids),
+                Order.is_deleted == False,  # noqa: E712
+                Order.order_status.in_(active_statuses),
+            )
+            .group_by(Order.delivery_assigned_user_id)
+        )
+        count_rows = (await self.session.execute(cnt_stmt)).all()
+        counts = {row[0]: int(row[1] or 0) for row in count_rows}
+
+        items: List[DeliveryAgentOption] = []
+        for uid, full_name, mobile in rows:
+            n = counts.get(uid, 0)
+            if n <= 0:
+                status_txt = "Available"
+            elif n == 1:
+                status_txt = "On active delivery (1 order)"
+            else:
+                status_txt = f"On active delivery ({n} orders)"
+            items.append(
+                DeliveryAgentOption(
+                    id=uid,
+                    full_name=full_name or "—",
+                    mobile_number=mobile or "—",
+                    delivery_status=status_txt,
+                    active_delivery_count=n,
+                )
+            )
+        return DeliveryAgentListResponse(items=items)
+
     async def get_users_list(
         self,
         limit: int = 20,

@@ -90,7 +90,8 @@ Before starting operations, ensure you have collected:
 | `PAYMENT_REFUND` | Process refunds | Managers |
 | `USER_MANAGE` | Manage user accounts | Admins |
 | `REPORT_VIEW` | View reports and analytics | Managers, Admins |
-| `DASHBOARD_VIEW` | View admin Statistics KPIs (`GET /api/v1/kpi/summary`) | Managers, Admins |
+
+> **Note:** This API uses **modules + CRUD** (`M_modules`, `M_module_role_permissions`) as the source of truth. Legacy codes like `ORDER_VIEW` are **derived** for the frontend. The admin Statistics/KPI API was **removed**; staff sidebar order comes from each module’s **`display_order`** and **`GET /api/v1/auth/me/permissions`** (see `ACCESS_AND_ROLES.md`).
 
 **Example Data:**
 ```json
@@ -132,8 +133,7 @@ For each role, specify which permissions it should have:
     "INVENTORY_VIEW",
     "INVENTORY_UPDATE",
     "ORDER_APPROVE",
-    "REPORT_VIEW",
-    "DASHBOARD_VIEW"
+    "REPORT_VIEW"
   ]
 }
 ```

@@ -14,10 +14,12 @@ from app.schemas.users_schema import (
     UserCreateRequest,
     UserUpdateRequest,
     UserResponse,
-    UserListResponse
+    UserListResponse,
+    DeliveryAgentListResponse,
 )
 from app.utils.auth import get_current_user_id_optional
 from app.utils.request_utils import get_client_ip
+from app.utils.rbac import require_module_action
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -37,20 +39,17 @@ async def create_user(
     return user
 
 
-@router.get("/{user_id}", response_model=UserResponse)
-async def get_user_by_id(
-    user_id: UUID,
-    db: AsyncSession = Depends(get_db)
+@router.get("/delivery-agents", response_model=DeliveryAgentListResponse)
+async def list_delivery_agents_for_assignment(
+    db: AsyncSession = Depends(get_db),
+    _: UUID = Depends(require_module_action("orders", "update")),
 ):
-    """Get user by ID."""
+    """
+    Users whose role includes DELIVERY_ORDER_UPDATE — for assign-delivery UI.
+    Includes name, phone, and a short workload status.
+    """
     service = UsersService(db)
-    user = await service.get_user_by_id(user_id)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} not found"
-        )
-    return user
+    return await service.list_delivery_agents_for_assignment()
 
 
 @router.get("/", response_model=UserListResponse)
@@ -68,6 +67,22 @@ async def get_users_list(
         limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order
     )
     return result
+
+
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user_by_id(
+    user_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get user by ID."""
+    service = UsersService(db)
+    user = await service.get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User with ID {user_id} not found"
+        )
+    return user
 
 
 @router.patch("/{user_id}", response_model=UserResponse)

@@ -22,22 +22,6 @@ from app.schemas.roles_schema import (
     RoleListResponse
 )
 
-# Permissions schemas
-from app.schemas.permissions_schema import (
-    PermissionCreateRequest,
-    PermissionUpdateRequest,
-    PermissionResponse,
-    PermissionListResponse
-)
-
-# Role Permissions schemas
-from app.schemas.role_permissions_schema import (
-    RolePermissionCreateRequest,
-    RolePermissionUpdateRequest,
-    RolePermissionResponse,
-    RolePermissionListResponse
-)
-
 # Users schemas
 from app.schemas.users_schema import (
     UserCreateRequest,
@@ -106,16 +90,6 @@ __all__ = [
     "RoleUpdateRequest",
     "RoleResponse",
     "RoleListResponse",
-    # Permissions
-    "PermissionCreateRequest",
-    "PermissionUpdateRequest",
-    "PermissionResponse",
-    "PermissionListResponse",
-    # Role Permissions
-    "RolePermissionCreateRequest",
-    "RolePermissionUpdateRequest",
-    "RolePermissionResponse",
-    "RolePermissionListResponse",
     # Users
     "UserCreateRequest",
     "UserUpdateRequest",

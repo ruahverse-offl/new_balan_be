@@ -16,7 +16,7 @@ from app.schemas.roles_schema import (
     RoleResponse,
     RoleListResponse
 )
-from app.utils.rbac import require_permission
+from app.utils.rbac import require_module_action
 from app.utils.request_utils import get_client_ip
 from app.config import get_settings
 
@@ -29,7 +29,7 @@ async def create_role(
     data: RoleCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ROLE_CREATE"))
+    current_user_id: UUID = Depends(require_module_action("roles", "create"))
 ):
     """
     Create a new role.
@@ -53,7 +53,7 @@ async def create_role(
 async def get_role_by_id(
     role_id: UUID,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ROLE_VIEW"))
+    current_user_id: UUID = Depends(require_module_action("roles", "read"))
 ):
     """
     Get role by ID.
@@ -82,7 +82,7 @@ async def get_roles_list(
     sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$", description="Sort order"),
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ROLE_VIEW"))
+    current_user_id: UUID = Depends(require_module_action("roles", "read"))
 ):
     """
     Get list of roles with pagination, search, and sort.
@@ -113,7 +113,7 @@ async def update_role(
     data: RoleUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ROLE_UPDATE"))
+    current_user_id: UUID = Depends(require_module_action("roles", "update"))
 ):
     """
     Update a role.
@@ -143,7 +143,7 @@ async def delete_role(
     role_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_permission("ROLE_DELETE"))
+    current_user_id: UUID = Depends(require_module_action("roles", "delete"))
 ):
     """
     Soft delete a role.

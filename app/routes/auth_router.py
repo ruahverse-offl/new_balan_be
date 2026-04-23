@@ -8,11 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
 from uuid import UUID
-from typing import List
 from app.db.db_connection import get_db
 from app.services.auth_service import AuthService
 from app.db.models import User, Role
-from sqlalchemy import select
+from sqlalchemy import case, or_, select
 from app.schemas.auth_schema import (
     LoginRequest,
     RegisterRequest,
@@ -21,11 +20,22 @@ from app.schemas.auth_schema import (
     TokenResponse
 )
 from app.utils.auth import get_current_user_id
-from app.utils.rbac import get_user_permissions_dependency, RBACService
+from app.utils.rbac import RBACService
 from app.utils.request_utils import get_client_ip
 from app.utils.password import hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
+
+
+def _role_display_label(role: Role | None) -> str:
+    """Short UI label from ``M_roles.name`` (e.g. ``DEV_ADMIN`` → ``Dev Admin``)."""
+    if not role or not (role.name or "").strip():
+        return "User"
+    parts = [p for p in str(role.name).split("_") if p]
+    if not parts:
+        return "User"
+    return " ".join(p[:1].upper() + p[1:].lower() for p in parts)
+
 
 # In-memory token blacklist (for production, use Redis)
 _blacklisted_tokens: set = set()
@@ -132,26 +142,44 @@ async def change_password(
     return {"message": "Password changed successfully"}
 
 
+def _menu_item_to_camel(m: dict) -> dict:
+    """API JSON uses camelCase; internal RBAC still builds snake_case from ORM."""
+    g = m.get("grants") or {}
+    return {
+        "code": m.get("code"),
+        "displayName": m.get("display_name"),
+        "displayOrder": int(m.get("display_order", 0) or 0),
+        "iconKey": m.get("icon_key"),
+        "grants": {
+            "canCreate": bool(g.get("can_create")),
+            "canRead": bool(g.get("can_read")),
+            "canUpdate": bool(g.get("can_update")),
+            "canDelete": bool(g.get("can_delete")),
+        },
+    }
+
+
 @router.get("/me/permissions", response_model=dict)
 async def get_my_permissions(
-    permissions: List[str] = Depends(get_user_permissions_dependency),
     current_user_id: UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Get current user's permission codes, role name, DB-driven admin ``menu_items``,
-    and ``menu_keys`` (task codes only, for backward compatibility).
+    Get current user's role name and DB-driven admin menu (camelCase JSON).
+
+    - ``menuItems``: array of ``{ code, displayName, displayOrder, iconKey, grants }``
+    - ``grants`` per item: ``{ canCreate, canRead, canUpdate, canDelete }`` from
+      ``M_module_role_permissions`` for the current user's role (authoritative for the SPA).
     """
     rbac_service = RBACService(db)
     role = await rbac_service.get_user_role(current_user_id)
-    role_code = role.name if role else "CUSTOMER"
+    role_code = role.name if role else "PUBLIC"
     menu_items = await rbac_service.get_sidebar_menu_items(current_user_id)
-    menu_keys = [m["code"] for m in menu_items]
     return {
-        "permissions": permissions,
-        "role_code": role_code,
-        "menu_items": menu_items,
-        "menu_keys": menu_keys,
+        "roleCode": role_code,
+        "roleDisplayName": _role_display_label(role),
+        "roleDescription": (role.description or None) if role else None,
+        "menuItems": [_menu_item_to_camel(m) for m in menu_items],
     }
 
 
@@ -160,20 +188,22 @@ async def get_customer_role_id(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Public endpoint to get the CUSTOMER role ID for registration.
+    Public endpoint to get the storefront signup role ID (``PUBLIC``, or legacy ``CUSTOMER``).
     No authentication required.
     """
     stmt = (
         select(Role)
-        .where(Role.name == "CUSTOMER")
-        .where(Role.is_active == True)
-        .where(Role.is_deleted == False)
+        .where(Role.is_active == True)  # noqa: E712
+        .where(Role.is_deleted == False)  # noqa: E712
+        .where(or_(Role.name == "PUBLIC", Role.name == "CUSTOMER"))
+        .order_by(case((Role.name == "PUBLIC", 0), else_=1))
+        .limit(1)
     )
     result = await db.execute(stmt)
     role = result.scalar_one_or_none()
     if not role:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="CUSTOMER role not found"
+            detail="PUBLIC (or CUSTOMER) role not found",
         )
     return {"role_id": str(role.id)}

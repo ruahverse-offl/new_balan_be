@@ -13,6 +13,9 @@ from typing import Any, List, Optional
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Backend project root (…/new_balan_be): resolve relative GCS key paths regardless of process cwd.
+_BACKEND_ROOT = Path(__file__).resolve().parent.parent
+
 _settings: Optional["Settings"] = None
 
 
@@ -60,6 +63,8 @@ class Settings(BaseSettings):
     LOCAL_STORAGE_PATH: str = "storage/devstorage"
     GCS_BUCKET_NAME: Optional[str] = None
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
+    #: Legacy env name; used only if ``GOOGLE_APPLICATION_CREDENTIALS`` is unset (same JSON key file).
+    GCS_CREDENTIALS_PATH: Optional[str] = None
 
     AZURE_STORAGE_CONNECTION_STRING: Optional[str] = None
     AZURE_STORAGE_CONTAINER_NAME: Optional[str] = None
@@ -96,16 +101,17 @@ class Settings(BaseSettings):
 
     def resolved_google_application_credentials_path(self) -> Optional[Path]:
         """
-        If ``GOOGLE_APPLICATION_CREDENTIALS`` is set, return the resolved path (absolute if relative).
+        Service account JSON path for GCS: ``GOOGLE_APPLICATION_CREDENTIALS``, or legacy ``GCS_CREDENTIALS_PATH``.
 
-        The file may or may not exist on disk; callers decide whether to require it.
-        Returns ``None`` if unset (typical for Cloud Run: use Application Default Credentials).
+        Relative paths resolve against the backend project root (not only ``cwd``), so uvicorn from another
+        directory still finds ``./service-account.json``. Returns ``None`` if both unset (use ADC).
         """
-        if not self.GOOGLE_APPLICATION_CREDENTIALS or not str(self.GOOGLE_APPLICATION_CREDENTIALS).strip():
+        raw = (self.GOOGLE_APPLICATION_CREDENTIALS or "").strip() or (self.GCS_CREDENTIALS_PATH or "").strip()
+        if not raw:
             return None
-        p = Path(self.GOOGLE_APPLICATION_CREDENTIALS)
+        p = Path(raw)
         if not p.is_absolute():
-            p = (Path.cwd() / p).resolve()
+            p = (_BACKEND_ROOT / p).resolve()
         return p
 
     def is_production(self) -> bool:

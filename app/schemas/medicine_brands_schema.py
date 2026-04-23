@@ -13,7 +13,11 @@ from app.schemas.common import ListResponse, BaseCreateRequest, BaseUpdateReques
 class MedicineBrandCreateRequest(BaseCreateRequest):
     medicine_id: UUID = Field(..., description="Medicine ID")
     brand_id: UUID = Field(..., description="Shared brand ID")
-    manufacturer: str = Field(..., max_length=255)
+    manufacturer: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Optional; stored as empty string if omitted",
+    )
     mrp: Decimal = Field(...)
     description: Optional[str] = None
     is_available: Optional[bool] = Field(True)

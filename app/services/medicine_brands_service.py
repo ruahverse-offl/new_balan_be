@@ -38,6 +38,8 @@ class MedicineBrandsService(BaseService):
         self, data: MedicineBrandCreateRequest, created_by: UUID, created_ip: str
     ) -> MedicineBrandResponse:
         payload = data.model_dump()
+        mf = str(payload.get("manufacturer") or "").strip()
+        payload["manufacturer"] = mf[:255] if mf else ""
         payload["is_active"] = True
         payload.setdefault("is_available", True)
         try:

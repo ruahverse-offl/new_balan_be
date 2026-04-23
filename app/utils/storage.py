@@ -24,10 +24,10 @@ def get_gcs_storage_client():
     """
     Google Cloud Storage client: explicit JSON key when present, else Application Default Credentials.
 
-    - If ``GOOGLE_APPLICATION_CREDENTIALS`` resolves to an **existing** file → service account key.
-    - If the path is set but the file is missing (e.g. prod ``/secrets/...`` copied into local ``.env``) →
-      log a warning and use ``storage.Client()`` (ADC), same as Cloud Run without a key file.
-    - If ``GOOGLE_APPLICATION_CREDENTIALS`` is unset → ``storage.Client()`` (ADC).
+    - If ``GOOGLE_APPLICATION_CREDENTIALS`` or legacy ``GCS_CREDENTIALS_PATH`` resolves to an **existing** file → key.
+    - If the path is set but the file is missing (e.g. prod ``/secrets/...`` in ``.env``) →
+      log a warning and use ``storage.Client()`` (ADC).
+    - If both unset → ``storage.Client()`` (ADC).
     """
     from google.cloud import storage
     from google.oauth2 import service_account
@@ -39,8 +39,8 @@ def get_gcs_storage_client():
             credentials = service_account.Credentials.from_service_account_file(str(path))
             return storage.Client(credentials=credentials)
         logger.warning(
-            "GOOGLE_APPLICATION_CREDENTIALS points to a missing file (%s); using Application Default Credentials. "
-            "Unset GOOGLE_APPLICATION_CREDENTIALS or fix the path; use STORAGE_BACKEND=local to skip GCS entirely.",
+            "GCS key file path points to a missing file (%s); using Application Default Credentials. "
+            "Set GOOGLE_APPLICATION_CREDENTIALS or GCS_CREDENTIALS_PATH to a real JSON key, or use STORAGE_BACKEND=local.",
             path,
         )
     return storage.Client()

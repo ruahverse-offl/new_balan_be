@@ -34,6 +34,7 @@ from app.config import get_settings
 from app.services.razorpay_service import (
     create_order as razorpay_create_order,
     verify_payment_signature,
+    verify_webhook_signature,
     fetch_payment,
     process_refund,
 )
@@ -294,6 +295,8 @@ class PaymentInitiateResponse(BaseModel):
         ...,
         description="test when using Razorpay test keys (rzp_test_*), live otherwise",
     )
+    payment_due_at: Optional[datetime] = None
+    payment_expires_in_seconds: Optional[int] = None
 
 
 class VerifyPaymentRequest(BaseModel):
@@ -331,6 +334,20 @@ class PaymentStatusResponse(BaseModel):
     amount: Optional[float] = None
     transaction_id: Optional[str] = None
     order_status: Optional[str] = None
+    payment_due_at: Optional[datetime] = None
+    payment_expires_in_seconds: Optional[int] = None
+    payment_window_expired: bool = False
+
+
+class RetryPaymentResponse(BaseModel):
+    order_id: str
+    order_reference: Optional[str] = None
+    razorpay_order_id: str
+    key_id: str
+    amount: int
+    razorpay_mode: Literal["test", "live"]
+    payment_due_at: Optional[datetime] = None
+    payment_expires_in_seconds: Optional[int] = None
 
 
 class RefundRequest(BaseModel):
@@ -392,6 +409,84 @@ def _delivery_scheduling_note_line(ds: Optional[DeliverySetting]) -> Optional[st
     labels = slot_labels_from_parsed_items(parsed)
     meta = next_delivery_fulfillment_meta(labels, now=datetime.now(timezone.utc))
     return fulfillment_meta_to_order_note_line(meta)
+
+
+def _payment_grace_minutes() -> int:
+    try:
+        raw = int(getattr(settings, "PAYMENT_GRACE_MINUTES", 30))
+    except Exception:
+        raw = 30
+    return max(1, raw)
+
+
+def _payment_due_at(order: Order) -> datetime:
+    created_at = order.created_at or datetime.now(timezone.utc)
+    if created_at.tzinfo is None:
+        # Treat naive DB values as IST wall-clock, then convert for UTC math.
+        created_at = created_at.replace(tzinfo=IST).astimezone(timezone.utc)
+    else:
+        created_at = created_at.astimezone(timezone.utc)
+    return created_at + timedelta(minutes=_payment_grace_minutes())
+
+
+def _seconds_until_due(order: Order, now_utc: Optional[datetime] = None) -> int:
+    now = now_utc or datetime.now(timezone.utc)
+    rem = int((_payment_due_at(order) - now).total_seconds())
+    max_window = _payment_grace_minutes() * 60
+    if rem > max_window:
+        # Defensive correction for legacy rows with timezone-skewed created_at values.
+        rem -= 5 * 60 * 60 + 30 * 60
+    rem = min(rem, max_window)
+    return max(0, rem)
+
+
+async def _expire_pending_payment_if_due(
+    *,
+    db: AsyncSession,
+    payment: Payment,
+    order: Order,
+    updated_by: UUID,
+    updated_ip: str,
+) -> bool:
+    """
+    Convert stale unpaid order to PAYMENT_CANCELLED after grace period.
+    Returns True if state was changed.
+    """
+    if payment.payment_status == "SUCCESS":
+        return False
+    if lc.normalize_order_status(order.order_status) != lc.PAYMENT_PENDING:
+        return False
+    if _seconds_until_due(order) > 0:
+        return False
+
+    now_ist = datetime.now(IST)
+    reason = "Payment window expired without successful payment."
+    await db.execute(
+        sa_update(Payment)
+        .where(Payment.id == payment.id)
+        .values(
+            payment_status="FAILED",
+            gateway_response=json.dumps(
+                {"checkout_outcome": "expired", "error_description": reason},
+                default=str,
+            ),
+            updated_by=updated_by,
+            updated_ip=updated_ip,
+        )
+    )
+    await db.execute(
+        sa_update(Order)
+        .where(Order.id == order.id)
+        .values(
+            order_status=lc.PAYMENT_CANCELLED,
+            cancellation_reason=reason,
+            cancelled_by_user_id=updated_by,
+            cancelled_at=now_ist,
+            updated_by=updated_by,
+            updated_ip=updated_ip,
+        )
+    )
+    return True
 
 
 def _merge_order_notes(data: PaymentInitiateRequest, ds: Optional[DeliverySetting]) -> Optional[str]:
@@ -637,6 +732,8 @@ async def initiate_razorpay_payment(
             key_id=settings.RAZORPAY_KEY_ID,
             amount=amount_paise,
             razorpay_mode=_razorpay_key_mode(settings.RAZORPAY_KEY_ID),
+            payment_due_at=_payment_due_at(order),
+            payment_expires_in_seconds=_seconds_until_due(order),
         )
 
     except HTTPException:
@@ -937,10 +1034,51 @@ def _rzpay_payment_captured(pr: dict[str, Any]) -> bool:
     return False
 
 
+async def _mark_payment_success_and_receive_order(
+    *,
+    db: AsyncSession,
+    payment: Payment,
+    order: Order,
+    razorpay_payment_id: str,
+    gateway_payload: dict[str, Any],
+    updated_by: UUID,
+    updated_ip: str,
+) -> None:
+    """Idempotently set payment SUCCESS and order ORDER_RECEIVED."""
+    if payment.payment_status == "SUCCESS":
+        return
+
+    now_ist = datetime.now(IST)
+    await inventory_service.decrease_stock_for_order(db, order.id, updated_by, updated_ip)
+    await db.execute(
+        sa_update(Payment)
+        .where(Payment.id == payment.id)
+        .values(
+            payment_status="SUCCESS",
+            gateway_transaction_id=razorpay_payment_id,
+            gateway_response=json.dumps(gateway_payload, default=str),
+            payment_date=now_ist,
+            updated_by=updated_by,
+            updated_ip=updated_ip,
+        )
+    )
+    await db.execute(
+        sa_update(Order)
+        .where(Order.id == order.id)
+        .values(
+            order_status=lc.ORDER_RECEIVED,
+            payment_completed_at=now_ist,
+            order_received_at=now_ist,
+            updated_by=updated_by,
+            updated_ip=updated_ip,
+        )
+    )
+
+
 @router.post("/checkout-outcome", response_model=CheckoutOutcomeResponse)
 async def report_checkout_outcome(
     data: CheckoutOutcomeRequest,
-    _request: Request,
+    request: Request,
     db: AsyncSession = Depends(get_db),
     current_user_id: UUID = Depends(get_current_user_id),
 ):
@@ -1060,45 +1198,201 @@ async def report_checkout_outcome(
                 detail="Could not complete automatic refund. Please contact support with your order reference.",
             )
 
-    # No capture, or mock, or missing keys / payment id — mark cancelled
-    await db.execute(
-        sa_update(Payment)
-        .where(Payment.id == payment.id)
-        .values(
-            payment_status="FAILED",
-            gateway_response=json.dumps(
-                {
-                    "checkout_outcome": data.outcome,
-                    "error_description": reason,
-                    "razorpay_snapshot": rz_payment,
-                },
-                default=str,
-            ),
-            updated_by=current_user_id,
-            updated_ip=ip_address,
+    # During grace window, keep order pending so customer can retry payment.
+    if _seconds_until_due(order) > 0:
+        await db.execute(
+            sa_update(Payment)
+            .where(Payment.id == payment.id)
+            .values(
+                gateway_response=json.dumps(
+                    {
+                        "checkout_outcome": data.outcome,
+                        "error_description": reason,
+                        "razorpay_snapshot": rz_payment,
+                        "retry_allowed_until": _payment_due_at(order).isoformat(),
+                    },
+                    default=str,
+                ),
+                updated_by=current_user_id,
+                updated_ip=ip_address,
+            )
         )
-    )
-    await db.execute(
-        sa_update(Order)
-        .where(Order.id == order.id)
-        .values(
-            order_status=lc.PAYMENT_CANCELLED,
-            cancellation_reason=reason[:2000],
-            cancelled_by_user_id=current_user_id,
-            cancelled_at=now_ist,
-            updated_by=current_user_id,
-            updated_ip=ip_address,
+        await db.commit()
+        logger.info("Checkout outcome kept pending (grace) — order=%s outcome=%s", order.id, data.outcome)
+        return CheckoutOutcomeResponse(
+            order_id=str(order.id),
+            order_status=order.order_status,
+            payment_status=payment.payment_status,
+            refund_initiated=False,
+            message=f"Payment not completed. You can retry within {_payment_grace_minutes()} minutes from order creation.",
         )
+
+    # Grace window expired: mark cancelled.
+    changed = await _expire_pending_payment_if_due(
+        db=db,
+        payment=payment,
+        order=order,
+        updated_by=current_user_id,
+        updated_ip=ip_address,
     )
     await db.commit()
-    logger.info("Checkout outcome cancelled — order=%s outcome=%s", order.id, data.outcome)
+    if changed:
+        logger.info("Checkout outcome expired — order=%s outcome=%s", order.id, data.outcome)
+        return CheckoutOutcomeResponse(
+            order_id=str(order.id),
+            order_status=lc.PAYMENT_CANCELLED,
+            payment_status="FAILED",
+            refund_initiated=False,
+            message="Payment window expired; order marked as cancelled.",
+        )
     return CheckoutOutcomeResponse(
         order_id=str(order.id),
-        order_status=lc.PAYMENT_CANCELLED,
-        payment_status="FAILED",
+        order_status=order.order_status,
+        payment_status=payment.payment_status,
         refund_initiated=False,
-        message="Order cancelled — no successful payment was recorded.",
+        message="No state change applied.",
     )
+
+
+@router.post("/webhook")
+async def razorpay_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Razorpay webhook receiver.
+
+    Verifies ``X-Razorpay-Signature`` against ``RAZORPAY_WEBHOOK_SECRET`` and applies
+    authoritative server-side payment confirmation.
+    """
+    webhook_secret = (settings.RAZORPAY_WEBHOOK_SECRET or "").strip()
+    if not webhook_secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Razorpay webhook secret is not configured.",
+        )
+
+    signature = (request.headers.get("X-Razorpay-Signature") or "").strip()
+    if not signature:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing webhook signature header.")
+
+    raw_body = await request.body()
+    payload_text = raw_body.decode("utf-8")
+    if not verify_webhook_signature(payload_text, signature, webhook_secret):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook signature.")
+
+    try:
+        payload = json.loads(payload_text or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook JSON payload.")
+
+    event = str(payload.get("event") or "")
+    entity = ((payload.get("payload") or {}).get("payment") or {}).get("entity") or {}
+    rz_order_id = str(entity.get("order_id") or "").strip()
+    rz_payment_id = str(entity.get("id") or "").strip()
+    ip_address = get_client_ip(request)
+
+    if not rz_order_id:
+        logger.info("Razorpay webhook ignored — event=%s missing payment.order_id", event)
+        return {"ok": True, "handled": False, "reason": "missing_order_id"}
+
+    row = (
+        await db.execute(
+            select(Payment, Order)
+            .join(Order, Payment.order_id == Order.id)
+            .where(Payment.gateway_order_id == rz_order_id)
+        )
+    ).first()
+    if not row:
+        logger.warning("Razorpay webhook order not found for gateway_order_id=%s event=%s", rz_order_id, event)
+        return {"ok": True, "handled": False, "reason": "payment_not_found"}
+
+    payment, order = row
+    actor_id = order.customer_id or payment.created_by or UUID("00000000-0000-0000-0000-000000000001")
+
+    try:
+        if event in ("payment.captured", "order.paid"):
+            await _mark_payment_success_and_receive_order(
+                db=db,
+                payment=payment,
+                order=order,
+                razorpay_payment_id=rz_payment_id or str(payment.gateway_transaction_id or ""),
+                gateway_payload={"webhook_event": event, "payment_entity": entity},
+                updated_by=actor_id,
+                updated_ip=ip_address,
+            )
+            await db.commit()
+            logger.info(
+                "Razorpay webhook applied success — order=%s event=%s payment_id=%s",
+                order.id,
+                event,
+                rz_payment_id,
+            )
+            return {"ok": True, "handled": True}
+
+        if event == "payment.failed" and payment.payment_status != "SUCCESS":
+            reason = str(((entity.get("error_description") or "") or "Payment failed at gateway.")).strip()
+            # Keep pending during configured grace window so customer can retry.
+            if lc.normalize_order_status(order.order_status) == lc.PAYMENT_PENDING and _seconds_until_due(order) > 0:
+                await db.execute(
+                    sa_update(Payment)
+                    .where(Payment.id == payment.id)
+                    .values(
+                        gateway_transaction_id=rz_payment_id or payment.gateway_transaction_id,
+                        gateway_response=json.dumps(
+                            {
+                                "webhook_event": event,
+                                "payment_entity": entity,
+                                "retry_allowed_until": _payment_due_at(order).isoformat(),
+                            },
+                            default=str,
+                        ),
+                        updated_by=actor_id,
+                        updated_ip=ip_address,
+                    )
+                )
+                await db.commit()
+                logger.info("Razorpay webhook failed kept pending (grace) — order=%s payment_id=%s", order.id, rz_payment_id)
+                return {"ok": True, "handled": True, "state": "pending_grace"}
+            await db.execute(
+                sa_update(Payment)
+                .where(Payment.id == payment.id)
+                .values(
+                    payment_status="FAILED",
+                    gateway_transaction_id=rz_payment_id or payment.gateway_transaction_id,
+                    gateway_response=json.dumps({"webhook_event": event, "payment_entity": entity}, default=str),
+                    updated_by=actor_id,
+                    updated_ip=ip_address,
+                )
+            )
+            await db.execute(
+                sa_update(Order)
+                .where(Order.id == order.id)
+                .values(
+                    order_status=lc.PAYMENT_CANCELLED,
+                    cancellation_reason=reason[:2000],
+                    cancelled_by_user_id=actor_id,
+                    cancelled_at=datetime.now(IST),
+                    updated_by=actor_id,
+                    updated_ip=ip_address,
+                )
+            )
+            await db.commit()
+            logger.info("Razorpay webhook marked failed — order=%s payment_id=%s", order.id, rz_payment_id)
+            return {"ok": True, "handled": True}
+
+        logger.info("Razorpay webhook ignored event=%s order=%s", event, order.id)
+        return {"ok": True, "handled": False, "reason": "event_not_handled"}
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("Razorpay webhook processing failed event=%s: %s", event, e, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Webhook processing failed.",
+        )
 
 
 @router.post("/verify", response_model=PaymentStatusResponse)
@@ -1145,36 +1439,15 @@ async def verify_razorpay_payment(
             order_status=order.order_status,
         )
 
-    ip_address = get_client_ip(request)
-    now_ist = datetime.now(IST)
-
     try:
-        await inventory_service.decrease_stock_for_order(db, order.id, current_user_id, ip_address)
-        await db.execute(
-            sa_update(Payment)
-            .where(Payment.id == payment.id)
-            .values(
-                payment_status="SUCCESS",
-                gateway_transaction_id=data.razorpay_payment_id,
-                gateway_response=json.dumps(
-                    {"razorpay_payment_id": data.razorpay_payment_id, "verified": True},
-                    default=str,
-                ),
-                payment_date=now_ist,
-                updated_by=current_user_id,
-                updated_ip=ip_address,
-            )
-        )
-        await db.execute(
-            sa_update(Order)
-            .where(Order.id == order.id)
-            .values(
-                order_status="ORDER_RECEIVED",
-                payment_completed_at=now_ist,
-                order_received_at=now_ist,
-                updated_by=current_user_id,
-                updated_ip=ip_address,
-            )
+        await _mark_payment_success_and_receive_order(
+            db=db,
+            payment=payment,
+            order=order,
+            razorpay_payment_id=data.razorpay_payment_id,
+            gateway_payload={"razorpay_payment_id": data.razorpay_payment_id, "verified": True},
+            updated_by=current_user_id,
+            updated_ip=get_client_ip(request),
         )
         await db.commit()
     except HTTPException:
@@ -1221,12 +1494,98 @@ async def get_payment_status(
     if not payment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment record not found.")
 
+    actor_id = order.customer_id or payment.created_by or current_user_id
+    changed = await _expire_pending_payment_if_due(
+        db=db,
+        payment=payment,
+        order=order,
+        updated_by=actor_id,
+        updated_ip=get_client_ip(request),
+    )
+    if changed:
+        await db.commit()
+        result = await db.execute(select(Order).where(Order.id == order_uuid))
+        order = result.scalar_one_or_none() or order
+        result = await db.execute(select(Payment).where(Payment.order_id == order_uuid))
+        payment = result.scalar_one_or_none() or payment
+
+    expires_in = _seconds_until_due(order)
     return PaymentStatusResponse(
         order_id=order_id,
         payment_status=payment.payment_status,
         amount=float(payment.amount),
         transaction_id=payment.gateway_transaction_id,
         order_status=order.order_status,
+        payment_due_at=_payment_due_at(order),
+        payment_expires_in_seconds=expires_in,
+        payment_window_expired=expires_in <= 0 and payment.payment_status != "SUCCESS",
+    )
+
+
+@router.get("/retry/{order_id}", response_model=RetryPaymentResponse)
+async def retry_pending_payment(
+    order_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+):
+    """Return Razorpay checkout payload for an existing pending order (within grace window)."""
+    if not (settings.RAZORPAY_KEY_ID and settings.RAZORPAY_KEY_SECRET):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payment gateway (Razorpay) is not configured.",
+        )
+    try:
+        order_uuid = UUID(order_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid order ID format.")
+
+    row = (
+        await db.execute(
+            select(Payment, Order)
+            .join(Order, Payment.order_id == Order.id)
+            .where(Order.id == order_uuid)
+        )
+    ).first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order or payment not found.")
+    payment, order = row
+
+    if order.customer_id and order.customer_id != current_user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not own this order.")
+
+    changed = await _expire_pending_payment_if_due(
+        db=db,
+        payment=payment,
+        order=order,
+        updated_by=current_user_id,
+        updated_ip="retry-payment",
+    )
+    if changed:
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Payment window expired for this order.",
+        )
+
+    if payment.payment_status == "SUCCESS":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Payment is already successful.")
+    if lc.normalize_order_status(order.order_status) != lc.PAYMENT_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Order is not pending for payment (status={order.order_status}).",
+        )
+    if not payment.gateway_order_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Razorpay order ID not found.")
+
+    return RetryPaymentResponse(
+        order_id=str(order.id),
+        order_reference=order.order_reference,
+        razorpay_order_id=str(payment.gateway_order_id),
+        key_id=settings.RAZORPAY_KEY_ID,
+        amount=int(round(float(payment.amount) * 100)),
+        razorpay_mode=_razorpay_key_mode(settings.RAZORPAY_KEY_ID),
+        payment_due_at=_payment_due_at(order),
+        payment_expires_in_seconds=_seconds_until_due(order),
     )
 
 

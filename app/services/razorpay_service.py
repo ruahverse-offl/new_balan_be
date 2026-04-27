@@ -88,6 +88,28 @@ def verify_payment_signature(
         return False
 
 
+def verify_webhook_signature(payload: str, razorpay_signature: str, webhook_secret: str) -> bool:
+    """
+    Verify Razorpay webhook signature (``X-Razorpay-Signature``).
+
+    Args:
+        payload: Raw request body as UTF-8 string
+        razorpay_signature: Signature from request header
+        webhook_secret: Webhook secret configured in Razorpay dashboard
+
+    Returns:
+        bool: True if signature is valid
+    """
+    try:
+        client = get_razorpay_client()
+        client.utility.verify_webhook_signature(payload, razorpay_signature, webhook_secret)
+        logger.info("Razorpay webhook signature verified")
+        return True
+    except SignatureVerificationError as e:
+        logger.warning("Razorpay webhook signature verification failed: %s", e)
+        return False
+
+
 def fetch_payment(payment_id: str) -> dict | None:
     """
     Fetch payment details from Razorpay.

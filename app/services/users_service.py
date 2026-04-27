@@ -11,7 +11,7 @@ from fastapi import HTTPException, status
 import logging
 
 from app.repositories.users_repository import UsersRepository
-from app.db.models import User, Order, AppModule, ModuleRolePermission
+from app.db.models import User, Order, AppModule, ModuleRolePermission, Role
 from app.domain import order_lifecycle as lc
 from app.schemas.users_schema import (
     UserCreateRequest,
@@ -72,9 +72,13 @@ class UsersService(BaseService):
             select(User.id, User.full_name, User.mobile_number)
             .join(ModuleRolePermission, ModuleRolePermission.role_id == User.role_id)
             .join(AppModule, AppModule.id == ModuleRolePermission.module_id)
+            .join(Role, Role.id == User.role_id)
             .where(
                 User.is_deleted == False,  # noqa: E712
                 User.is_active == True,
+                Role.is_deleted == False,  # noqa: E712
+                Role.is_active == True,  # noqa: E712
+                Role.name == "DELIVERY_AGENT",
                 ModuleRolePermission.is_deleted == False,  # noqa: E712
                 ModuleRolePermission.can_update == True,  # noqa: E712
                 AppModule.is_deleted == False,  # noqa: E712

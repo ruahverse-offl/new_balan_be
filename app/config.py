@@ -71,6 +71,9 @@ class Settings(BaseSettings):
 
     RAZORPAY_KEY_ID: Optional[str] = None
     RAZORPAY_KEY_SECRET: Optional[str] = None
+    RAZORPAY_WEBHOOK_SECRET: Optional[str] = None
+    PAYMENT_GRACE_MINUTES: int = 30
+    PAYMENT_GRACE_MINUTES: int = 10
 
     INV_STOCK_THRESHOLD: int = 10
 

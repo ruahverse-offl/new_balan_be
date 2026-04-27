@@ -106,6 +106,12 @@ class OrderResponse(BaseResponse):
     notes: Optional[str] = Field(None, description="Order notes")
     prescription_path: Optional[str] = Field(None, description="Prescription file path/URL")
     delivery_assigned_user_id: Optional[UUID] = Field(None, description="Assigned delivery user id")
+    delivery_assigned_user_name: Optional[str] = Field(
+        None, description="Assigned delivery user full name"
+    )
+    delivery_assigned_user_phone: Optional[str] = Field(
+        None, description="Assigned delivery user phone"
+    )
     cancellation_reason: Optional[str] = Field(None, description="Why staff cancelled (wrong Rx, etc.)")
     cancelled_by_user_id: Optional[UUID] = Field(None, description="Staff who cancelled")
     cancelled_at: Optional[datetime] = Field(None, description="When staff cancelled")

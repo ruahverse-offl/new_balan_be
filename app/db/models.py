@@ -273,6 +273,68 @@ class DeliverySetting(MasterModel):
     delivery_slot_times = Column(Text, nullable=True)
 
 
+class NotificationMaster(MasterModel):
+    """
+    Notification template master.
+
+    Stores one event template with per-channel message templates and variables
+    encoded as JSON text.
+    """
+
+    __tablename__ = "M_notification_master"
+
+    event_code = Column(String(100), nullable=False, unique=True, index=True)
+    event_name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    # JSON text map, example:
+    # {"push":{"title_template":"...","body_template":"...","message_variables":["order_reference"]}}
+    channel_templates = Column(Text, nullable=False, server_default=text("'{}'"))
+
+
+class NotificationSetting(MasterModel):
+    """
+    Per user-device notification preference + Expo token.
+
+    Design: one row per user + token (supports multiple devices per user).
+    """
+
+    __tablename__ = "M_notification_settings"
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "expo_push_token", name="uq_m_notification_settings_user_token"),
+    )
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=False, index=True)
+    device_id = Column(String(255), nullable=True, index=True)
+    device_platform = Column(String(20), nullable=False, default="unknown", server_default=text("'unknown'"))
+    expo_push_token = Column(String(255), nullable=False, index=True)
+    is_push_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+
+
+class NotificationLog(BaseModel):
+    """
+    Notification send attempt log with retry metadata.
+    """
+
+    __tablename__ = "T_notification_logs"
+
+    user_id = Column(UUID(as_uuid=True), ForeignKey("M_users.id"), nullable=False, index=True)
+    notification_master_id = Column(UUID(as_uuid=True), ForeignKey("M_notification_master.id"), nullable=False, index=True)
+    notification_setting_id = Column(UUID(as_uuid=True), ForeignKey("M_notification_settings.id"), nullable=True, index=True)
+    channel = Column(String(20), nullable=False, default="push", server_default=text("'push'"))
+    expo_push_token = Column(String(255), nullable=True, index=True)
+    # JSON text snapshot sent to provider.
+    payload_snapshot = Column(Text, nullable=False, server_default=text("'{}'"))
+    send_status = Column(String(20), nullable=False, default="queued", server_default=text("'queued'"), index=True)
+    provider_response = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    max_retry_attempts = Column(Integer, nullable=False, default=3, server_default=text("3"))
+    retry_interval_minutes = Column(Integer, nullable=False, default=5, server_default=text("5"))
+    next_retry_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True, index=True)
+
+
 class OrderItem(BaseModel):
     __tablename__ = "T_order_items"
     order_id = Column(UUID(as_uuid=True), ForeignKey("T_orders.id"), nullable=False)

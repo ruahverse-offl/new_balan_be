@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from datetime import date, datetime, time, timedelta
@@ -59,6 +60,9 @@ from app.db.models import (
     MedicineBrandOffering,
     MedicineCategory,
     ModuleRolePermission,
+    NotificationLog,
+    NotificationMaster,
+    NotificationSetting,
     Order,
     OrderItem,
     Payment,
@@ -97,6 +101,9 @@ MODULE_ROWS: List[Tuple[str, str, int, str]] = [
     ("coupons", "Coupons & Marquee", 60, "Ticket"),
     ("staff", "Manage Staff", 70, "UserCheck"),
     ("test-bookings", "Test Bookings", 80, "Calendar"),
+    ("notification-master", "Notification Master", 81, "Bell"),
+    ("notification-settings", "Notification Settings", 82, "Bell"),
+    ("notification-logs", "Notification Logs", 83, "Bell"),
     ("payments", "Payments", 90, "CreditCard"),
     ("coupon-usages", "Coupon Usages", 100, "BarChart3"),
 ]
@@ -151,6 +158,23 @@ for rname in ("PUBLIC", "CUSTOMER"):
 
 def _now() -> datetime:
     return datetime.now(IST)
+
+
+async def _table_exists(session: AsyncSession, table_name: str) -> bool:
+    """Return True when table exists in current PostgreSQL schema."""
+    exists = await session.scalar(
+        text(
+            """
+            select 1
+            from pg_tables
+            where schemaname = 'public'
+              and tablename = :table_name
+            limit 1
+            """
+        ),
+        {"table_name": table_name},
+    )
+    return bool(exists)
 
 
 async def _get_or_create_role(session: AsyncSession, name: str, description: str) -> Role:
@@ -343,6 +367,22 @@ async def _force_cleanup(session: AsyncSession) -> None:
     demo_coupon_ids = select(Coupon.id).where(Coupon.code.like("DEMO%"), Coupon.is_deleted == False)  # noqa: E712
     demo_emails = [e for e, _, _, _ in USER_SPECS]
     demo_user_ids = select(User.id).where(User.email.in_(demo_emails))
+    notification_tables_ready = all(
+        [
+            await _table_exists(session, "M_notification_master"),
+            await _table_exists(session, "M_notification_settings"),
+            await _table_exists(session, "T_notification_logs"),
+        ]
+    )
+    if notification_tables_ready:
+        demo_notification_master_ids = select(NotificationMaster.id).where(
+            NotificationMaster.event_code.like("DEMO_%"),
+            NotificationMaster.is_deleted == False,  # noqa: E712
+        )
+        demo_notification_setting_ids = select(NotificationSetting.id).where(
+            NotificationSetting.device_id.like("DEMO-%"),
+            NotificationSetting.is_deleted == False,  # noqa: E712
+        )
 
     await session.execute(delete(CouponUsage).where(CouponUsage.order_id.in_(sub_orders)))
     await session.execute(delete(CouponUsage).where(CouponUsage.coupon_id.in_(demo_coupon_ids)))
@@ -351,8 +391,14 @@ async def _force_cleanup(session: AsyncSession) -> None:
     await session.execute(delete(Doctor).where(Doctor.id.in_(demo_doc_ids)))
     await session.execute(delete(PolyclinicTest).where(PolyclinicTest.id.in_(demo_test_ids)))
     await session.execute(delete(Address).where(Address.user_id.in_(demo_user_ids)))
+    if notification_tables_ready:
+        await session.execute(delete(NotificationLog).where(NotificationLog.notification_master_id.in_(demo_notification_master_ids)))
+        await session.execute(delete(NotificationLog).where(NotificationLog.notification_setting_id.in_(demo_notification_setting_ids)))
+        await session.execute(delete(NotificationSetting).where(NotificationSetting.id.in_(demo_notification_setting_ids)))
+        await session.execute(delete(NotificationMaster).where(NotificationMaster.id.in_(demo_notification_master_ids)))
 
     await session.execute(delete(OrderItem).where(OrderItem.order_id.in_(sub_orders)))
+    await session.execute(delete(OrderItem).where(OrderItem.medicine_brand_id.in_(demo_off_ids)))
     await session.execute(delete(Payment).where(Payment.order_id.in_(sub_orders)))
     await session.execute(delete(Order).where(Order.id.in_(sub_orders)))
 
@@ -377,6 +423,119 @@ async def _force_cleanup(session: AsyncSession) -> None:
     await session.execute(delete(User).where(User.email.in_(demo_emails)))
     await session.flush()
     logger.warning("Force cleanup removed DEMO-* rows across masters/transactions and %s* orders.", ORDER_REF_PREFIX)
+
+
+async def _seed_notifications(
+    session: AsyncSession,
+    admin_id: UUID,
+    customer: User,
+) -> None:
+    """Seed notification masters/settings/logs for admin web notification screens."""
+    tables_ready = all(
+        [
+            await _table_exists(session, "M_notification_master"),
+            await _table_exists(session, "M_notification_settings"),
+            await _table_exists(session, "T_notification_logs"),
+        ]
+    )
+    if not tables_ready:
+        logger.warning("Notification tables not present yet; skipping notification seed rows.")
+        return
+    template = {
+        "push": {
+            "title_template": "Order {{order_reference}} update",
+            "body_template": "Hi {{customer_name}}, your order is now {{order_status}}.",
+            "message_variables": ["order_reference", "customer_name", "order_status"],
+            "is_enabled": True,
+        },
+        "sms": {
+            "title_template": "",
+            "body_template": "Order {{order_reference}} is {{order_status}}.",
+            "message_variables": ["order_reference", "order_status"],
+            "is_enabled": False,
+        },
+    }
+    masters_data: List[Tuple[str, str, str]] = [
+        ("DEMO_ORDER_PLACED", "Order placed", "Sent after successful payment"),
+        ("DEMO_ORDER_OUT_FOR_DELIVERY", "Out for delivery", "Sent when parcel is with delivery agent"),
+        ("DEMO_ORDER_DELIVERED", "Order delivered", "Sent on successful delivery"),
+    ]
+    masters: List[NotificationMaster] = []
+    for event_code, event_name, description in masters_data:
+        row = await session.scalar(
+            select(NotificationMaster).where(
+                NotificationMaster.event_code == event_code,
+                NotificationMaster.is_deleted == False,  # noqa: E712
+            )
+        )
+        if not row:
+            row = NotificationMaster(
+                event_code=event_code,
+                event_name=event_name,
+                description=description,
+                channel_templates=json.dumps(template),
+                created_by=admin_id,
+                created_ip=SEED_IP,
+                is_deleted=False,
+                is_active=True,
+            )
+            session.add(row)
+            await session.flush()
+        masters.append(row)
+
+    setting = await session.scalar(
+        select(NotificationSetting).where(
+            NotificationSetting.user_id == customer.id,
+            NotificationSetting.device_id == "DEMO-ANDROID-01",
+            NotificationSetting.is_deleted == False,  # noqa: E712
+        )
+    )
+    if not setting:
+        setting = NotificationSetting(
+            user_id=customer.id,
+            device_id="DEMO-ANDROID-01",
+            device_platform="android",
+            expo_push_token="ExponentPushToken[DEMO-SEED-TOKEN-01]",
+            is_push_enabled=True,
+            created_by=admin_id,
+            created_ip=SEED_IP,
+            is_deleted=False,
+            is_active=True,
+        )
+        session.add(setting)
+        await session.flush()
+
+    existing_log = await session.scalar(
+        select(NotificationLog.id).where(
+            NotificationLog.expo_push_token == "ExponentPushToken[DEMO-SEED-TOKEN-01]",
+            NotificationLog.is_deleted == False,  # noqa: E712
+        )
+    )
+    if not existing_log:
+        for idx, status in enumerate(["sent", "failed", "retrying"], start=1):
+            session.add(
+                NotificationLog(
+                    user_id=customer.id,
+                    notification_master_id=masters[min(idx - 1, len(masters) - 1)].id,
+                    notification_setting_id=setting.id,
+                    channel="push",
+                    expo_push_token="ExponentPushToken[DEMO-SEED-TOKEN-01]",
+                    payload_snapshot='{"order_reference":"DEMO-SEED-0%d"}' % idx,
+                    send_status=status,
+                    provider_response='{"status":"ok"}' if status == "sent" else None,
+                    error_message=None if status == "sent" else "Expo push service transient error",
+                    retry_count=0 if status == "sent" else 1,
+                    max_retry_attempts=3,
+                    retry_interval_minutes=5,
+                    next_retry_at=_now() + timedelta(minutes=5) if status == "retrying" else None,
+                    sent_at=_now() if status == "sent" else None,
+                    created_by=admin_id,
+                    created_ip=SEED_IP,
+                    is_deleted=False,
+                )
+            )
+    await session.flush()
+    logger.info("Notification demo rows ensured")
 
 
 async def _seed_users(session: AsyncSession, pwd_hash: str, roles_by_name: Dict[str, Role]) -> Dict[str, User]:
@@ -968,13 +1127,14 @@ async def run(force: bool, create_tables: bool, wipe_db: bool) -> None:
     pwd_hash = hash_password(PLAIN_PASSWORD)
 
     async with factory() as session:
+        incremental_only = False
         if not wipe_db and not force:
             existing = await session.scalar(
                 select(User.id).where(User.email == "admin@newbalan.com", User.is_deleted == False)  # noqa: E712
             )
             if existing:
-                logger.info("Demo data already present (admin@newbalan.com exists). Use --force or --wipe-db.")
-                return
+                incremental_only = True
+                logger.info("Demo users already present. Running incremental seed for modules/RBAC/notifications.")
 
         if force and not wipe_db:
             await _force_cleanup(session)
@@ -995,6 +1155,19 @@ async def run(force: bool, create_tables: bool, wipe_db: bool) -> None:
 
         await _ensure_matrix(session, roles_by_name, modules_by_name)
 
+        if incremental_only:
+            admin = await session.scalar(
+                select(User).where(User.email == "admin@newbalan.com", User.is_deleted == False)  # noqa: E712
+            )
+            customer = await session.scalar(
+                select(User).where(User.email == "customer@newbalan.com", User.is_deleted == False)  # noqa: E712
+            )
+            if admin and customer:
+                await _seed_notifications(session, admin.id, customer)
+            await session.commit()
+            logger.info("Incremental seed complete.")
+            return
+
         users = await _seed_users(session, pwd_hash, roles_by_name)
         admin = users["admin@newbalan.com"]
         customer = users["customer@newbalan.com"]
@@ -1009,6 +1182,7 @@ async def run(force: bool, create_tables: bool, wipe_db: bool) -> None:
         await _seed_inventory_alert_demo(session, admin.id, offerings)
         await _seed_orders(session, admin.id, customer, delivery, offerings)
         await _seed_coupon_usages(session, admin.id, customer, coupon_by_code)
+        await _seed_notifications(session, admin.id, customer)
 
         await session.commit()
 

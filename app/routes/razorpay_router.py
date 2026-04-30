@@ -9,10 +9,9 @@ from typing import List, Literal, Optional, Any
 from uuid import UUID, uuid4
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
-import re
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select, update as sa_update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.db_connection import get_db
@@ -25,7 +24,6 @@ from app.db.models import (
     MedicineBrandOffering,
     Brand,
     Medicine,
-    User,
 )
 from app.utils.auth import get_current_user_id
 from app.utils.rbac import require_module_action
@@ -54,22 +52,34 @@ logger = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
 
 
-def _slug_username(full_name: str) -> str:
-    """Convert full_name to username slug: lowercase, spaces to underscores, alphanumeric + underscore only."""
-    if not full_name or not full_name.strip():
-        return "user"
-    s = re.sub(r"[^a-zA-Z0-9\s]", "", full_name.strip())
-    s = re.sub(r"\s+", "_", s).lower()
-    return s[:50] if s else "user"
-
-
-def _make_order_reference(username_slug: str) -> str:
-    """Format: YYYYMMDD_HHMMSS_username_suffix (suffix = 4 hex for uniqueness)."""
+async def _make_order_reference(db: AsyncSession) -> str:
+    """
+    Format: NB-YYYYMMDD-000001 (daily increment, concurrency-safe via advisory lock).
+    """
     now = datetime.now(IST)
-    date_part = now.strftime("%Y%m%d")
-    time_part = now.strftime("%H%M%S")
-    suffix = uuid4().hex[:4]
-    return f"{date_part}_{time_part}_{username_slug}_{suffix}"
+    day_part = now.strftime("%Y%m%d")
+    prefix = f"NB-{day_part}-"
+    lock_key = int(day_part)
+    await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    row = await db.execute(
+        text(
+            """
+            SELECT order_reference
+            FROM public."T_orders"
+            WHERE order_reference LIKE :prefix_like
+            ORDER BY order_reference DESC
+            LIMIT 1
+            """
+        ),
+        {"prefix_like": f"{prefix}%"},
+    )
+    last_ref = row.scalar_one_or_none()
+    next_num = 1
+    if isinstance(last_ref, str) and last_ref.startswith(prefix):
+        tail = last_ref[len(prefix):]
+        if tail.isdigit():
+            next_num = int(tail) + 1
+    return f"{prefix}{next_num:06d}"
 
 
 settings = get_settings()
@@ -558,13 +568,7 @@ async def initiate_razorpay_payment(
         rx_needed = await _cart_requires_prescription_from_catalog(db, data.items)
         prescription_stored = _validated_prescription_path(data.prescription_path, required=rx_needed)
 
-        # Resolve username for order_reference (date_time_username)
-        user_row = await db.execute(
-            select(User.full_name).where(User.id == current_user_id, User.is_deleted == False)
-        )
-        user_full_name = (user_row.scalar_one_or_none() or "") or data.customer_name or "user"
-        username_slug = _slug_username(user_full_name)
-        order_reference = _make_order_reference(username_slug)
+        order_reference = await _make_order_reference(db)
 
         # 1. Create Order (id = UUID in DB; order_reference = date_time_username for display)
         order = Order(
@@ -791,12 +795,7 @@ async def mock_initiate_payment(
         rx_needed = await _cart_requires_prescription_from_catalog(db, data.items)
         prescription_stored = _validated_prescription_path(data.prescription_path, required=rx_needed)
 
-        user_row = await db.execute(
-            select(User.full_name).where(User.id == current_user_id, User.is_deleted == False)
-        )
-        user_full_name = (user_row.scalar_one_or_none() or "") or data.customer_name or "user"
-        username_slug = _slug_username(user_full_name)
-        order_reference = _make_order_reference(username_slug)
+        order_reference = await _make_order_reference(db)
 
         order = Order(
             order_reference=order_reference,

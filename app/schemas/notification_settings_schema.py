@@ -56,6 +56,7 @@ class NotificationSettingResponse(BaseResponse):
 
     id: UUID = Field(..., description="Notification settings ID")
     user_id: UUID = Field(..., description="Owner user ID")
+    user_name: Optional[str] = Field(None, description="Owner user full name (enriched)")
     device_id: Optional[str] = Field(None, description="Device identifier")
     device_platform: str = Field(..., description="Client platform")
     expo_push_token: str = Field(..., description="Expo push token")

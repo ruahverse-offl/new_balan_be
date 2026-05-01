@@ -5,6 +5,7 @@ Business logic for notification device settings management (admin view)
 
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.notification_settings_repository import NotificationSettingsRepository
@@ -14,6 +15,7 @@ from app.schemas.notification_settings_schema import (
 )
 from app.schemas.common import PaginationResponse
 from app.services.base_service import BaseService
+from app.db.models import User
 
 
 class NotificationSettingsService(BaseService):
@@ -23,15 +25,26 @@ class NotificationSettingsService(BaseService):
         repository = NotificationSettingsRepository(session)
         super().__init__(repository, session)
 
+    async def _fetch_user_map(self, user_ids) -> Dict[UUID, str]:
+        if not user_ids:
+            return {}
+        result = await self.session.execute(
+            select(User.id, User.full_name).where(User.id.in_(user_ids))
+        )
+        return {uid: name for uid, name in result}
+
     async def get_by_id(self, id: UUID) -> Optional[NotificationSettingResponse]:
         """Get notification setting by ID."""
         row = await self.repository.get_by_id(id)
         if not row:
             return None
 
+        user_map = await self._fetch_user_map([row.user_id])
+
         return NotificationSettingResponse(
             id=row.id,
             user_id=row.user_id,
+            user_name=user_map.get(row.user_id),
             expo_push_token=row.expo_push_token,
             device_id=row.device_id,
             device_platform=row.device_platform,
@@ -63,10 +76,14 @@ class NotificationSettingsService(BaseService):
             additional_filters=filters or {},
         )
 
+        user_ids = list({row.user_id for row in rows})
+        user_map = await self._fetch_user_map(user_ids)
+
         items = [
             NotificationSettingResponse(
                 id=row.id,
                 user_id=row.user_id,
+                user_name=user_map.get(row.user_id),
                 expo_push_token=row.expo_push_token,
                 device_id=row.device_id,
                 device_platform=row.device_platform,

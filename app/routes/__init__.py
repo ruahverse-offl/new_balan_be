@@ -40,6 +40,7 @@ from app.routes.me_router import router as me_router
 from app.routes.notification_master_router import router as notification_master_router
 from app.routes.notification_settings_router import router as notification_settings_router
 from app.routes.notification_logs_router import router as notification_logs_router
+from app.routes.notification_test_push_router import router as notification_test_push_router
 
 # Create main API router
 api_router = APIRouter()
@@ -79,6 +80,7 @@ api_router.include_router(rbac_matrix_router)
 api_router.include_router(notification_master_router)
 api_router.include_router(notification_settings_router)
 api_router.include_router(notification_logs_router)
+api_router.include_router(notification_test_push_router)
 
 __all__ = [
     "api_router",
@@ -108,4 +110,5 @@ __all__ = [
     "notification_master_router",
     "notification_settings_router",
     "notification_logs_router",
+    "notification_test_push_router",
 ]

@@ -346,9 +346,10 @@ class OrdersService(BaseService):
                 )
             patch["delivery_assigned_at"] = get_current_ist_time()
 
+        # Resolve agent for push — must mirror validation (assignment may reuse existing order.agent id).
         notify_delivery_agent_id: Optional[UUID] = None
         if new_status == lc.DELIVERY_ASSIGNED:
-            notify_delivery_agent_id = patch.get("delivery_assigned_user_id")
+            notify_delivery_agent_id = patch.get("delivery_assigned_user_id") or order.delivery_assigned_user_id
         elif "delivery_assigned_user_id" in patch:
             notify_delivery_agent_id = patch.get("delivery_assigned_user_id")
 
@@ -356,10 +357,14 @@ class OrdersService(BaseService):
         if not order:
             return None
 
-        if notify_delivery_agent_id is not None:
+        nid = getattr(order, "delivery_assigned_user_id", None)
+        if nid is None:
+            nid = notify_delivery_agent_id
+
+        if nid is not None:
             push_svc = DeliveryAssignmentPushService(self.session)
             await push_svc.notify_agent_assigned(
-                agent_user_id=notify_delivery_agent_id,
+                agent_user_id=nid,
                 order=order,
                 audit_user_id=updated_by,
                 audit_ip=updated_ip,

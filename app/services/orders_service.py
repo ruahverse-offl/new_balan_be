@@ -29,6 +29,7 @@ from app.schemas.order_items_schema import OrderItemResponse
 from app.schemas.payments_schema import PaymentResponse
 from app.schemas.common import PaginationResponse
 from app.services.base_service import BaseService
+from app.services.delivery_assignment_push_service import DeliveryAssignmentPushService
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -194,6 +195,7 @@ class OrdersService(BaseService):
         sort_order: Optional[str] = None,
         user_id: Optional[UUID] = None,
         delivery_assigned_user_id: Optional[UUID] = None,
+        delivery_agent_status_scope: Optional[str] = None,
     ) -> OrderListResponse:
         """Get list of orders with pagination, search, and sort."""
         additional_filters: Dict[str, Any] = {}
@@ -201,18 +203,22 @@ class OrdersService(BaseService):
             additional_filters["customer_id"] = user_id
         if delivery_assigned_user_id:
             additional_filters["delivery_assigned_user_id"] = delivery_assigned_user_id
-        orders, pagination = await self.repository.get_list(
-            limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
-            additional_filters=additional_filters if additional_filters else None
+        list_kw: Dict[str, Any] = dict(
+            limit=limit,
+            offset=offset,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            additional_filters=additional_filters if additional_filters else None,
         )
+        if delivery_agent_status_scope:
+            list_kw["delivery_agent_status_scope"] = delivery_agent_status_scope
+        orders, pagination = await self.repository.get_list(**list_kw)
         # Keep list view consistent with payment grace window behavior.
         for o in orders:
             await self._expire_pending_payment_if_due_for_order(o.id)
         if orders:
-            orders, pagination = await self.repository.get_list(
-                limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
-                additional_filters=additional_filters if additional_filters else None
-            )
+            orders, pagination = await self.repository.get_list(**list_kw)
         order_responses = [
             OrderResponse(**self._model_to_dict(o)) for o in orders
         ]
@@ -340,9 +346,24 @@ class OrdersService(BaseService):
                 )
             patch["delivery_assigned_at"] = get_current_ist_time()
 
+        notify_delivery_agent_id: Optional[UUID] = None
+        if new_status == lc.DELIVERY_ASSIGNED:
+            notify_delivery_agent_id = patch.get("delivery_assigned_user_id")
+        elif "delivery_assigned_user_id" in patch:
+            notify_delivery_agent_id = patch.get("delivery_assigned_user_id")
+
         order = await self.repository.update(order_id, patch, updated_by, updated_ip)
         if not order:
             return None
+
+        if notify_delivery_agent_id is not None:
+            push_svc = DeliveryAssignmentPushService(self.session)
+            await push_svc.notify_agent_assigned(
+                agent_user_id=notify_delivery_agent_id,
+                order=order,
+                audit_user_id=updated_by,
+                audit_ip=updated_ip,
+            )
 
         order_dict = self._model_to_dict(order)
         return OrderResponse(**order_dict)

@@ -34,11 +34,13 @@ from app.routes.upload_router import router as upload_router
 from app.routes.inventory_router import router as inventory_router
 from app.routes.modules_router import router as modules_router
 from app.routes.rbac_matrix_router import router as rbac_matrix_router
+from app.routes.me_router import router as me_router
 
 # Create main API router
 api_router = APIRouter()
 
 # Include all routers
+api_router.include_router(me_router)
 api_router.include_router(roles_router)
 api_router.include_router(users_router)
 api_router.include_router(medicine_categories_router)

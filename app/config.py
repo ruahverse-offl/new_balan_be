@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = Field(default="change-me-in-production", min_length=1)
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 180
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     DATABASE_URL: Optional[str] = None
@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     PAYMENT_GRACE_MINUTES: int = 10
 
     INV_STOCK_THRESHOLD: int = 10
+
+    #: Expo Push API (delivery agent app). Optional bearer for higher rate limits.
+    EXPO_PUSH_API_URL: str = "https://exp.host/--/api/v2/push/send"
+    EXPO_ACCESS_TOKEN: Optional[str] = None
 
     @property
     def cors_origins_list(self) -> List[str]:

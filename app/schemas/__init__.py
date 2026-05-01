@@ -84,6 +84,9 @@ from app.schemas.notification_master_schema import (
     NotificationMasterListResponse,
 )
 from app.schemas.notification_settings_schema import (
+    MeNotificationSettingRegisterRequest,
+    MeNotificationSettingRevokeRequest,
+    MeNotificationSettingRevokeResponse,
     NotificationSettingCreateRequest,
     NotificationSettingUpdateRequest,
     NotificationSettingResponse,
@@ -149,6 +152,9 @@ __all__ = [
     "NotificationMasterUpdateRequest",
     "NotificationMasterResponse",
     "NotificationMasterListResponse",
+    "MeNotificationSettingRegisterRequest",
+    "MeNotificationSettingRevokeRequest",
+    "MeNotificationSettingRevokeResponse",
     "NotificationSettingCreateRequest",
     "NotificationSettingUpdateRequest",
     "NotificationSettingResponse",

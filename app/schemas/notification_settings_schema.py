@@ -9,7 +9,7 @@ Recommended granularity:
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.common import BaseCreateRequest, BaseResponse, BaseUpdateRequest, ListResponse
 
@@ -66,4 +66,40 @@ class NotificationSettingListResponse(ListResponse[NotificationSettingResponse])
     """Response model for notification settings list with pagination."""
 
     pass
+
+
+class MeNotificationSettingRegisterRequest(BaseCreateRequest):
+    """
+    Register or update this device's Expo push token for the signed-in user.
+
+    Upserts on (user_id, expo_push_token). ``user_id`` comes from JWT, not the body.
+    """
+
+    expo_push_token: str = Field(..., max_length=255, description="Expo push token for this device")
+    device_id: Optional[str] = Field(None, max_length=255, description="Optional stable app-generated device id")
+    device_platform: DevicePlatform = Field("unknown", description="Client platform")
+    is_push_enabled: bool = Field(True, description="Whether push is enabled for this device row")
+
+
+class MeNotificationSettingRevokeRequest(BaseCreateRequest):
+    """
+    Soft-delete notification device rows for the signed-in user (call on logout).
+
+    At least one of ``device_id`` or ``expo_push_token`` should be sent; both may be sent.
+    """
+
+    device_id: Optional[str] = Field(None, max_length=255, description="Installation / device id used at register time")
+    expo_push_token: Optional[str] = Field(None, max_length=255, description="Expo push token to revoke for this user")
+
+    @model_validator(mode="after")
+    def at_least_one_identifier(self) -> "MeNotificationSettingRevokeRequest":
+        if not self.device_id and not self.expo_push_token:
+            raise ValueError("Provide device_id and/or expo_push_token")
+        return self
+
+
+class MeNotificationSettingRevokeResponse(BaseModel):
+    """Result of revoking notification device rows."""
+
+    revoked_count: int = Field(..., ge=0, description="Number of rows soft-deleted")
 

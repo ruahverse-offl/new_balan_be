@@ -3,7 +3,7 @@ Orders Router
 FastAPI routes for orders resource
 """
 
-from typing import Optional
+from typing import Optional, Literal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -136,6 +136,14 @@ async def get_orders_list(
     search: Optional[str] = Query(default=None),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
+    delivery_list_scope: Optional[Literal["active", "history"]] = Query(
+        default=None,
+        description=(
+            "Delivery agents only: `active` = in-progress runs (assigned → out for delivery); "
+            "`history` = delivered or returned to store. Ignored for staff/customer lists. "
+            "When omitted for delivery agents, defaults to `active`."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user_id: UUID = Depends(get_current_user_id),
 ):
@@ -145,6 +153,8 @@ async def get_orders_list(
     - ORDER_VIEW or PAYMENT_PROCESS: all orders (aligned with payments list).
     - DELIVERY_ORDER_VIEW or DELIVERY_ORDER_UPDATE (without the above): orders assigned to the current user.
     - Otherwise: orders where customer_id is the current user.
+
+    For delivery-scoped users, ``delivery_list_scope`` filters by fulfillment stage (active vs history).
     """
     rbac_service = RBACService(db)
     has_full_list = await _can_view_all_orders(rbac_service, current_user_id)
@@ -161,11 +171,16 @@ async def get_orders_list(
     else:
         user_id_filter = current_user_id
 
+    delivery_agent_status_scope: Optional[str] = None
+    if delivery_assigned_filter is not None and not has_full_list:
+        delivery_agent_status_scope = delivery_list_scope or "active"
+
     service = OrdersService(db)
     result = await service.get_orders_list(
         limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order,
         user_id=user_id_filter,
         delivery_assigned_user_id=delivery_assigned_filter,
+        delivery_agent_status_scope=delivery_agent_status_scope,
     )
     return result
 

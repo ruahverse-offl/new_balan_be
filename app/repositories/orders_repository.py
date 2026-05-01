@@ -5,7 +5,7 @@ Data access layer for orders
 
 from typing import Optional, List, Dict, Any, Tuple
 from uuid import UUID
-from sqlalchemy import select, func
+from sqlalchemy import select, func, cast, Date
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.base_repository import BaseRepository
@@ -49,6 +49,7 @@ class OrdersRepository(BaseRepository[Order]):
         additional_filters: Optional[Dict[str, Any]] = None,
         *,
         delivery_agent_status_scope: Optional[str] = None,
+        order_date: Optional[str] = None,
     ) -> tuple[List[Order], Dict[str, Any]]:
         """
         Paginated orders list; extends base with optional delivery-agent tab filter.
@@ -68,6 +69,9 @@ class OrdersRepository(BaseRepository[Order]):
             query = query.where(self.model.order_status.in_(_DELIVERY_LIST_ACTIVE_STATUSES))
         elif delivery_agent_status_scope == "history":
             query = query.where(self.model.order_status.in_(_DELIVERY_LIST_HISTORY_STATUSES))
+
+        if order_date:
+            query = query.where(cast(self.model.created_at, Date) == order_date)
 
         if search:
             searchable_fields = self._get_searchable_fields()

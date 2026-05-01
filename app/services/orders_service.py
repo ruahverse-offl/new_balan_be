@@ -196,6 +196,8 @@ class OrdersService(BaseService):
         user_id: Optional[UUID] = None,
         delivery_assigned_user_id: Optional[UUID] = None,
         delivery_agent_status_scope: Optional[str] = None,
+        order_status: Optional[str] = None,
+        order_date: Optional[str] = None,
     ) -> OrderListResponse:
         """Get list of orders with pagination, search, and sort."""
         additional_filters: Dict[str, Any] = {}
@@ -203,6 +205,8 @@ class OrdersService(BaseService):
             additional_filters["customer_id"] = user_id
         if delivery_assigned_user_id:
             additional_filters["delivery_assigned_user_id"] = delivery_assigned_user_id
+        if order_status:
+            additional_filters["order_status"] = order_status
         list_kw: Dict[str, Any] = dict(
             limit=limit,
             offset=offset,
@@ -213,6 +217,8 @@ class OrdersService(BaseService):
         )
         if delivery_agent_status_scope:
             list_kw["delivery_agent_status_scope"] = delivery_agent_status_scope
+        if order_date:
+            list_kw["order_date"] = order_date
         orders, pagination = await self.repository.get_list(**list_kw)
         # Keep list view consistent with payment grace window behavior.
         for o in orders:

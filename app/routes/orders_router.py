@@ -136,6 +136,8 @@ async def get_orders_list(
     search: Optional[str] = Query(default=None),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
+    order_status: Optional[str] = Query(default=None, description="Filter by exact order status (e.g. PENDING, DELIVERED)"),
+    order_date: Optional[str] = Query(default=None, description="Filter by creation date (YYYY-MM-DD, IST)"),
     delivery_list_scope: Optional[Literal["active", "history"]] = Query(
         default=None,
         description=(
@@ -181,6 +183,8 @@ async def get_orders_list(
         user_id=user_id_filter,
         delivery_assigned_user_id=delivery_assigned_filter,
         delivery_agent_status_scope=delivery_agent_status_scope,
+        order_status=order_status or None,
+        order_date=order_date or None,
     )
     return result
 

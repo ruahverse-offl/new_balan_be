@@ -73,9 +73,14 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: Optional[str] = None
     RAZORPAY_WEBHOOK_SECRET: Optional[str] = None
     PAYMENT_GRACE_MINUTES: int = 30
-    PAYMENT_GRACE_MINUTES: int = 10
 
     INV_STOCK_THRESHOLD: int = 10
+
+    # --- Static delivery location (single-city service) ---
+    DELIVERY_CITY: str = "City"
+    DELIVERY_STATE: str = "State"
+    DELIVERY_PINCODE: str = ""
+    DELIVERY_COUNTRY: str = "India"
 
     #: Expo Push API (delivery agent app). Optional bearer for higher rate limits.
     EXPO_PUSH_API_URL: str = "https://exp.host/--/api/v2/push/send"

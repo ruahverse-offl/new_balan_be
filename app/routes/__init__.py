@@ -84,6 +84,7 @@ api_router.include_router(notification_test_push_router)
 
 __all__ = [
     "api_router",
+    "me_router",
     "roles_router",
     "users_router",
     "medicine_categories_router",

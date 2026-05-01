@@ -18,6 +18,7 @@ from app.schemas.delivery_settings_schema import (
 )
 from app.services.base_service import BaseService
 from app.utils.delivery_windows import delivery_schedule_public_meta
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,13 @@ class DeliverySettingsService(BaseService):
             bool(enriched.get("is_enabled", True)),
             enriched.get("delivery_slot_times"),
         )
+        cfg = get_settings()
+        enriched["delivery_location"] = {
+            "city": cfg.DELIVERY_CITY,
+            "state": cfg.DELIVERY_STATE,
+            "pincode": cfg.DELIVERY_PINCODE,
+            "country": cfg.DELIVERY_COUNTRY,
+        }
         return _to_jsonable_dict(enriched)
 
     async def create_or_update_delivery_settings(
@@ -153,4 +161,11 @@ class DeliverySettingsService(BaseService):
             bool(enriched.get("is_enabled", True)),
             enriched.get("delivery_slot_times"),
         )
+        cfg = get_settings()
+        enriched["delivery_location"] = {
+            "city": cfg.DELIVERY_CITY,
+            "state": cfg.DELIVERY_STATE,
+            "pincode": cfg.DELIVERY_PINCODE,
+            "country": cfg.DELIVERY_COUNTRY,
+        }
         return _to_jsonable_dict(enriched)

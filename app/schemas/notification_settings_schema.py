@@ -6,6 +6,7 @@ Recommended granularity:
 - One row per user + device token (best for multi-device login support).
 """
 
+from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -56,10 +57,12 @@ class NotificationSettingResponse(BaseResponse):
     id: UUID = Field(..., description="Notification settings ID")
     user_id: UUID = Field(..., description="Owner user ID")
     device_id: Optional[str] = Field(None, description="Device identifier")
-    device_platform: DevicePlatform = Field(..., description="Client platform")
+    device_platform: str = Field(..., description="Client platform")
     expo_push_token: str = Field(..., description="Expo push token")
     is_push_enabled: bool = Field(..., description="Push enabled preference")
     is_active: bool = Field(..., description="Whether this row is active")
+    created_at: datetime = Field(..., description="When created")
+    updated_at: datetime = Field(..., description="When last updated")
 
 
 class NotificationSettingListResponse(ListResponse[NotificationSettingResponse]):

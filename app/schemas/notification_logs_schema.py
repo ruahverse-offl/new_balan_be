@@ -79,17 +79,17 @@ class NotificationLogResponse(BaseResponse):
     user_id: UUID = Field(..., description="Target user ID")
     notification_master_id: UUID = Field(..., description="Master template ID")
     notification_setting_id: Optional[UUID] = Field(None, description="Settings row used")
-    channel: NotificationChannelCode = Field(..., description="Delivery channel")
+    channel: str = Field(..., description="Delivery channel")
     expo_push_token: Optional[str] = Field(None, description="Token used for send")
     payload_snapshot: Dict[str, Any] = Field(default_factory=dict, description="Resolved payload snapshot")
-    send_status: NotificationSendStatus = Field(..., description="Current delivery status")
-    provider_response: Optional[Dict[str, Any]] = Field(None, description="Raw provider response")
+    send_status: str = Field(..., description="Current delivery status")
+    provider_response: Optional[str] = Field(None, description="Raw provider response")
     error_message: Optional[str] = Field(None, description="Error details")
     retry_count: int = Field(..., description="Retries attempted")
     max_retry_attempts: int = Field(..., description="Maximum retries allowed")
-    retry_interval_minutes: int = Field(..., description="Retry interval in minutes")
-    next_retry_at: Optional[datetime] = Field(None, description="Next retry time")
     sent_at: Optional[datetime] = Field(None, description="Success timestamp")
+    created_at: datetime = Field(..., description="When the log was created")
+    updated_at: datetime = Field(..., description="When the log was last updated")
 
 
 class NotificationLogListResponse(ListResponse[NotificationLogResponse]):

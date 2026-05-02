@@ -187,3 +187,23 @@ class OrderListResponse(ListResponse[OrderResponse]):
     """Response model for order list with pagination."""
 
     pass
+
+
+class OrderSalesSummaryResponse(BaseModel):
+    """Aggregated sales figures across all non-deleted orders."""
+
+    delivered_amount: Decimal = Field(..., description="Sum of final_amount for DELIVERED orders")
+    returned_amount: Decimal = Field(..., description="Sum of final_amount for DELIVERY_RETURNED orders")
+    cancelled_amount: Decimal = Field(..., description="Sum of final_amount for CANCELLED_BY_STAFF orders")
+    refunded_amount: Decimal = Field(
+        ...,
+        description="Sum of final_amount for REFUNDED and REFUND_INITIATED orders",
+    )
+    net_revenue: Decimal = Field(
+        ...,
+        description="delivered − returned − refunded; best headline for realized order value after reversals",
+    )
+    net_sales: Decimal = Field(
+        ...,
+        description="Legacy: delivered − returned − cancelled − refunded (cancelled can distort vs cash story)",
+    )

@@ -5,7 +5,8 @@ Data access layer for orders
 
 from typing import Optional, List, Dict, Any, Tuple
 from uuid import UUID
-from sqlalchemy import select, func, cast, Date
+from sqlalchemy import select, func, cast, case, Date
+from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.base_repository import BaseRepository
@@ -26,6 +27,17 @@ _DELIVERY_LIST_HISTORY_STATUSES: Tuple[str, ...] = (
     lc.DELIVERED,
     lc.DELIVERY_RETURNED,
     "COMPLETED",  # legacy → DELIVERED
+)
+
+# Staff "active" = everything not yet terminal; "history" = completed / cancelled / refunded
+_STAFF_HISTORY_STATUSES: Tuple[str, ...] = (
+    lc.DELIVERED,
+    lc.DELIVERY_RETURNED,
+    lc.CANCELLED_BY_STAFF,
+    lc.REFUNDED,
+    lc.PAYMENT_CANCELLED,
+    "COMPLETED",  # legacy
+    "CANCELLED",  # legacy
 )
 
 
@@ -49,6 +61,7 @@ class OrdersRepository(BaseRepository[Order]):
         additional_filters: Optional[Dict[str, Any]] = None,
         *,
         delivery_agent_status_scope: Optional[str] = None,
+        staff_scope: Optional[str] = None,
         order_date: Optional[str] = None,
     ) -> tuple[List[Order], Dict[str, Any]]:
         """
@@ -70,6 +83,11 @@ class OrdersRepository(BaseRepository[Order]):
         elif delivery_agent_status_scope == "history":
             query = query.where(self.model.order_status.in_(_DELIVERY_LIST_HISTORY_STATUSES))
 
+        if staff_scope == "active":
+            query = query.where(~self.model.order_status.in_(_STAFF_HISTORY_STATUSES))
+        elif staff_scope == "history":
+            query = query.where(self.model.order_status.in_(_STAFF_HISTORY_STATUSES))
+
         if order_date:
             query = query.where(cast(self.model.created_at, Date) == order_date)
 
@@ -88,3 +106,50 @@ class OrdersRepository(BaseRepository[Order]):
         records = result.scalars().all()
         pagination = calculate_pagination(total, limit, offset)
         return list(records), pagination
+
+    async def get_sales_summary(self) -> dict:
+        """Aggregate final_amount by terminal status for the sales KPI strip.
+
+        *net_revenue* (owner-facing): delivered minus returns and refunds only — money
+        notionally realized then reversed. Cancelled orders are shown separately; they
+        often never became collected revenue, so subtracting them from the headline
+        misstates \"how much sale value we kept after fulfilment reversals\".
+
+        *net_sales* (legacy): also subtracts cancelled order values (can go deeply
+        negative when cancellations are large vs delivered).
+        """
+        stmt = select(
+            func.coalesce(func.sum(case(
+                (self.model.order_status.in_([lc.DELIVERED, "COMPLETED"]), self.model.final_amount),
+                else_=Decimal("0"),
+            )), Decimal("0")).label("delivered"),
+            func.coalesce(func.sum(case(
+                (self.model.order_status == lc.DELIVERY_RETURNED, self.model.final_amount),
+                else_=Decimal("0"),
+            )), Decimal("0")).label("returned"),
+            func.coalesce(func.sum(case(
+                (self.model.order_status.in_([lc.CANCELLED_BY_STAFF, "CANCELLED"]), self.model.final_amount),
+                else_=Decimal("0"),
+            )), Decimal("0")).label("cancelled"),
+            func.coalesce(func.sum(case(
+                (
+                    self.model.order_status.in_([lc.REFUNDED, lc.REFUND_INITIATED]),
+                    self.model.final_amount,
+                ),
+                else_=Decimal("0"),
+            )), Decimal("0")).label("refunded"),
+        ).where(self.model.is_deleted == False)  # noqa: E712
+        row = (await self.session.execute(stmt)).one()
+        delivered = row.delivered or Decimal("0")
+        returned = row.returned or Decimal("0")
+        cancelled = row.cancelled or Decimal("0")
+        refunded = row.refunded or Decimal("0")
+        net_revenue = delivered - returned - refunded
+        return {
+            "delivered_amount": delivered,
+            "returned_amount": returned,
+            "cancelled_amount": cancelled,
+            "refunded_amount": refunded,
+            "net_revenue": net_revenue,
+            "net_sales": delivered - returned - cancelled - refunded,
+        }

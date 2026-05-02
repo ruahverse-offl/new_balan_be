@@ -16,6 +16,7 @@ from app.schemas.orders_schema import (
     OrderResponse,
     OrderListResponse,
     OrderDetailResponse,
+    OrderSalesSummaryResponse,
 )
 from app.utils.auth import get_current_user_id, get_current_user_id_optional
 from app.utils.rbac import RBACService
@@ -64,6 +65,22 @@ async def create_order(
     service = OrdersService(db)
     order = await service.create_order(data, current_user_id, ip_address)
     return order
+
+
+@router.get("/stats", response_model=OrderSalesSummaryResponse)
+async def get_orders_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+):
+    """Aggregated sales figures: delivered / returned / cancelled / net. Staff only."""
+    rbac_service = RBACService(db)
+    if not await _can_view_all_orders(rbac_service, current_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="orders:read permission required",
+        )
+    service = OrdersService(db)
+    return await service.get_sales_summary()
 
 
 @router.get("/{order_id}/detail", response_model=OrderDetailResponse)
@@ -146,6 +163,10 @@ async def get_orders_list(
             "When omitted for delivery agents, defaults to `active`."
         ),
     ),
+    staff_scope: Optional[Literal["active", "history"]] = Query(
+        default=None,
+        description="Staff only: `active` = non-terminal orders; `history` = delivered/returned/cancelled/refunded.",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user_id: UUID = Depends(get_current_user_id),
 ):
@@ -183,6 +204,7 @@ async def get_orders_list(
         user_id=user_id_filter,
         delivery_assigned_user_id=delivery_assigned_filter,
         delivery_agent_status_scope=delivery_agent_status_scope,
+        staff_scope=staff_scope if has_full_list else None,
         order_status=order_status or None,
         order_date=order_date or None,
     )

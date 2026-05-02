@@ -24,6 +24,7 @@ from app.schemas.orders_schema import (
     OrderResponse,
     OrderListResponse,
     OrderDetailResponse,
+    OrderSalesSummaryResponse,
 )
 from app.schemas.order_items_schema import OrderItemResponse
 from app.schemas.payments_schema import PaymentResponse
@@ -196,6 +197,7 @@ class OrdersService(BaseService):
         user_id: Optional[UUID] = None,
         delivery_assigned_user_id: Optional[UUID] = None,
         delivery_agent_status_scope: Optional[str] = None,
+        staff_scope: Optional[str] = None,
         order_status: Optional[str] = None,
         order_date: Optional[str] = None,
     ) -> OrderListResponse:
@@ -217,6 +219,8 @@ class OrdersService(BaseService):
         )
         if delivery_agent_status_scope:
             list_kw["delivery_agent_status_scope"] = delivery_agent_status_scope
+        if staff_scope:
+            list_kw["staff_scope"] = staff_scope
         if order_date:
             list_kw["order_date"] = order_date
         orders, pagination = await self.repository.get_list(**list_kw)
@@ -378,6 +382,11 @@ class OrdersService(BaseService):
 
         order_dict = self._model_to_dict(order)
         return OrderResponse(**order_dict)
+
+    async def get_sales_summary(self) -> OrderSalesSummaryResponse:
+        """Aggregated sales figures for the admin KPI strip."""
+        data = await self.repository.get_sales_summary()
+        return OrderSalesSummaryResponse(**data)
 
     async def delete_order(
         self,

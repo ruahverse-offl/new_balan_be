@@ -5,6 +5,7 @@ FastAPI Application Entry Point
 import asyncio
 import logging
 import traceback
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -50,6 +51,34 @@ app.add_middleware(
 )
 
 
+_NOTIFICATION_LOG_RETENTION_DAYS = 30
+_NOTIFICATION_LOG_CLEANUP_INTERVAL_SECONDS = 24 * 60 * 60  # run once per day
+
+
+async def _cleanup_old_notification_logs() -> None:
+    """Hard-delete notification log rows older than the retention window."""
+    from app.db.db_connection import get_db
+    from app.repositories.notification_logs_repository import NotificationLogsRepository
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=_NOTIFICATION_LOG_RETENTION_DAYS)
+    try:
+        async for session in get_db():
+            repo = NotificationLogsRepository(session)
+            deleted = await repo.delete_older_than(cutoff)
+            if deleted:
+                logger.info("Notification log cleanup: deleted %d rows older than %s", deleted, cutoff.date())
+    except Exception as exc:
+        logger.error("Notification log cleanup failed: %s", exc, exc_info=True)
+
+
+async def _notification_log_cleanup_loop() -> None:
+    """Run the notification log cleanup once on startup, then every 24 hours."""
+    await asyncio.sleep(10)  # brief delay so DB is ready
+    while True:
+        await _cleanup_old_notification_logs()
+        await asyncio.sleep(_NOTIFICATION_LOG_CLEANUP_INTERVAL_SECONDS)
+
+
 async def _init_db_background() -> None:
     """Connect and create tables after the server is listening (avoids Cloud Run timeout)."""
     await asyncio.sleep(2)
@@ -70,6 +99,7 @@ async def startup_event() -> None:
     try:
         DatabaseConnection.initialize()
         asyncio.create_task(_init_db_background())
+        asyncio.create_task(_notification_log_cleanup_loop())
         logger.info("Application started; database initialization running in background")
     except Exception as exc:
         logger.error("Failed to create database engine: %s", exc, exc_info=True)

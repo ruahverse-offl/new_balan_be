@@ -2,9 +2,10 @@
 Notification logs repository — list rows for a user (in-app notification center).
 """
 
+from datetime import datetime, timezone
 from typing import List
 from uuid import UUID
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.base_repository import BaseRepository
@@ -31,3 +32,13 @@ class NotificationLogsRepository(BaseRepository[NotificationLog]):
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def delete_older_than(self, cutoff: datetime) -> int:
+        """Hard-delete log rows whose ``created_at`` is before ``cutoff``. Returns row count."""
+        stmt = (
+            delete(self.model)
+            .where(self.model.created_at < cutoff)
+            .execution_options(synchronize_session=False)
+        )
+        result = await self.session.execute(stmt)
+        return result.rowcount

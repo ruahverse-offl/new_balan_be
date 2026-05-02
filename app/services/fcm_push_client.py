@@ -26,9 +26,9 @@ _FCM_SCOPE = "https://www.googleapis.com/auth/firebase.messaging"
 def _service_account_path() -> Optional[Path]:
     settings = get_settings()
     p = settings.resolved_fcm_credentials_path()
-    logger.info("FCM: resolved_fcm_credentials_path=%s is_file=%s", p, p.is_file() if p else None)
+    logger.warning("FCM: raw FCM_CREDENTIALS_PATH=%r resolved=%s is_file=%s", settings.FCM_CREDENTIALS_PATH, p, p.is_file() if p else None)
     if p and p.is_file():
-        logger.info("FCM: using FCM credentials at %s", p)
+        logger.warning("FCM: using FCM credentials at %s", p)
         return p
     gcs = settings.resolved_google_application_credentials_path()
     logger.warning("FCM: FCM path not usable, falling back to GCS creds=%s is_file=%s", gcs, gcs.is_file() if gcs else None)

@@ -1,5 +1,5 @@
 """
-Send Expo push notifications when an order is assigned (or reassigned) to a delivery agent.
+Send push when an order is assigned (or reassigned) to a delivery agent via FCM HTTP v1.
 
 Uses ``M_notification_master`` (event ``DELIVERY_ASSIGNED``), ``M_notification_settings`` tokens,
 and logs each attempt in ``T_notification_logs``. Failures do not roll back the order update.
@@ -14,14 +14,13 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.models import NotificationMaster, Order
 from app.repositories.notification_logs_repository import NotificationLogsRepository
 from app.repositories.notification_master_repository import NotificationMasterRepository
 from app.repositories.notification_settings_repository import NotificationSettingsRepository
+from app.services.fcm_push_client import send_fcm_notification
 
 logger = logging.getLogger(__name__)
 
@@ -57,39 +56,9 @@ def _order_context(order: Order) -> Dict[str, str]:
     }
 
 
-def _parse_expo_data_statuses(response_json: Any, num_messages: int) -> List[Dict[str, Any]]:
-    """
-    Normalize Expo push API JSON into one dict per sent message (success / error).
-
-    Handles single-message and batch responses.
-    """
-    if not isinstance(response_json, dict):
-        return [{"status": "error", "message": "invalid_expo_response"} for _ in range(num_messages)]
-
-    data = response_json.get("data")
-    if data is None:
-        err = response_json.get("errors")
-        msg = "expo_error"
-        if isinstance(err, list) and err:
-            msg = str(err[0])
-        return [{"status": "error", "message": msg} for _ in range(num_messages)]
-
-    if isinstance(data, dict):
-        return [data]
-    if isinstance(data, list):
-        out: List[Dict[str, Any]] = []
-        for i in range(num_messages):
-            if i < len(data) and isinstance(data[i], dict):
-                out.append(data[i])
-            else:
-                out.append({"status": "error", "message": "missing_ticket"})
-        return out
-    return [{"status": "error", "message": "unexpected_data_shape"} for _ in range(num_messages)]
-
-
 class DeliveryAssignmentPushService:
     """
-    Notify a delivery agent via Expo push when they receive an order assignment.
+    Notify a delivery agent via FCM when they receive an order assignment.
 
     Inputs: SQLAlchemy session, order row after persist, target agent user id, audit fields for logs.
     Output: none; logs and HTTP errors are swallowed so order updates always succeed.
@@ -134,7 +103,7 @@ class DeliveryAssignmentPushService:
         audit_ip: str,
     ) -> None:
         """
-        Load templates and device tokens, send Expo push(es), write ``T_notification_logs``.
+        Load templates and device tokens, send FCM push(es), write ``T_notification_logs``.
 
         Accepts:
             agent_user_id — delivery agent ``M_users.id``
@@ -181,73 +150,21 @@ class DeliveryAssignmentPushService:
             settings_rows = await self._settings_repo.list_push_enabled_for_user(agent_user_id)
             if not settings_rows:
                 logger.info(
-                    "No push-enabled Expo tokens for delivery agent user_id=%s; assignment push skipped",
+                    "No push-enabled device tokens for delivery agent user_id=%s; assignment push skipped",
                     agent_user_id,
                 )
                 return
 
-            messages: List[Dict[str, Any]] = []
-            setting_id_per_message: List[Optional[UUID]] = []
-            for s in settings_rows:
-                token = (s.expo_push_token or "").strip()
-                if not token:
-                    continue
-                messages.append(
-                    {
-                        "to": token,
-                        "title": title,
-                        "body": body,
-                        "data": data_payload,
-                        "sound": "default",
-                        "priority": "high",
-                        "channelId": "delivery_default",
-                    }
-                )
-                setting_id_per_message.append(s.id)
-
-            if not messages:
-                return
-
-            settings = get_settings()
-            raw_url = (getattr(settings, "EXPO_PUSH_API_URL", None) or "").strip()
-            url = raw_url or "https://exp.host/--/api/v2/push/send"
-            headers: Dict[str, str] = {"Content-Type": "application/json", "Accept": "application/json"}
-            token = (getattr(settings, "EXPO_ACCESS_TOKEN", None) or "").strip()
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-
-            request_body: Any = messages[0] if len(messages) == 1 else messages
-
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(str(url), json=request_body, headers=headers)
-
-            try:
-                response_json = resp.json()
-            except Exception:
-                response_json = {"raw": resp.text[:2000]}
-
-            if resp.status_code < 200 or resp.status_code >= 300:
-                response_json = {
-                    "data": [
-                        {"status": "error", "message": f"HTTP {resp.status_code}: {str(response_json)[:500]}"}
-                    ]
-                }
-
-            parsed = _parse_expo_data_statuses(response_json, len(messages))
             now_utc = datetime.now(timezone.utc)
 
-            for idx, msg in enumerate(messages):
-                token_used = str(msg.get("to") or "")
-                setting_id: Optional[UUID] = (
-                    setting_id_per_message[idx] if idx < len(setting_id_per_message) else None
-                )
-
-                ticket = parsed[idx] if idx < len(parsed) else {"status": "error", "message": "no_ticket"}
-                ok = str(ticket.get("status", "")).lower() == "ok"
-                err_text: Optional[str] = None
-                if not ok:
-                    err_text = str(ticket.get("message") or ticket.get("error") or resp.reason_phrase)
-
+            async def _log_push(
+                *,
+                token_used: str,
+                setting_id: Optional[UUID],
+                ok: bool,
+                provider_blob: Any,
+                err_text: Optional[str],
+            ) -> None:
                 await self._logs_repo.create(
                     {
                         "user_id": agent_user_id,
@@ -257,7 +174,7 @@ class DeliveryAssignmentPushService:
                         "expo_push_token": token_used or None,
                         "payload_snapshot": payload_for_inbox,
                         "send_status": "sent" if ok else "failed",
-                        "provider_response": json.dumps(ticket, default=str)[:8000],
+                        "provider_response": json.dumps(provider_blob, default=str)[:8000],
                         "error_message": err_text[:2000] if err_text else None,
                         "retry_count": 0,
                         "sent_at": now_utc if ok else None,
@@ -265,6 +182,30 @@ class DeliveryAssignmentPushService:
                     audit_user_id,
                     audit_ip,
                 )
+
+            str_data = {k: str(v) for k, v in data_payload.items()}
+
+            for s in settings_rows:
+                fcm_token = (s.expo_push_token or "").strip()
+                if not fcm_token:
+                    continue
+                fcm_result = await send_fcm_notification(
+                    device_token=fcm_token,
+                    title=title,
+                    body=body,
+                    data=str_data,
+                    android_channel_id="delivery_default",
+                )
+                ok = bool(fcm_result.get("ok"))
+                err_text: Optional[str] = None if ok else str(fcm_result.get("message") or "fcm_failed")
+                await _log_push(
+                    token_used=fcm_token,
+                    setting_id=s.id,
+                    ok=ok,
+                    provider_blob=fcm_result,
+                    err_text=err_text,
+                )
+
             await self.session.flush()
 
         except Exception:

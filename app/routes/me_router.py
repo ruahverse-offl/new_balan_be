@@ -62,10 +62,11 @@ async def register_my_notification_device(
     current_user_id: UUID = Depends(get_current_user_id),
 ):
     """
-    Register or refresh this device's Expo push token for delivery / customer apps.
+    Register or refresh this device's push token for delivery / customer apps.
 
     Upserts ``M_notification_settings`` for the JWT user and token so push (e.g. delivery
-    assignment) can target this device.
+    assignment) can target this device. Accepts Expo tokens or FCM registration tokens
+    (bare React Native); the server routes each type to Expo Push API or FCM HTTP v1.
     """
     service = MeNotificationSettingsService(db)
     row = await service.upsert_my_device(current_user_id, body, _client_ip(request))

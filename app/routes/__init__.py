@@ -81,6 +81,7 @@ api_router.include_router(notification_master_router)
 api_router.include_router(notification_settings_router)
 api_router.include_router(notification_logs_router)
 api_router.include_router(notification_test_push_router)
+api_router.include_router(me_router)
 
 __all__ = [
     "api_router",

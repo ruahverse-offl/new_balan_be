@@ -6,6 +6,7 @@ Business logic for notification logs management (admin view)
 import json
 from typing import Any, Dict, List, Optional
 from uuid import UUID
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.notification_logs_repository import NotificationLogsRepository
@@ -15,6 +16,7 @@ from app.schemas.notification_logs_schema import (
 )
 from app.schemas.common import PaginationResponse
 from app.services.base_service import BaseService
+from app.db.models import User, NotificationMaster
 
 
 class NotificationLogsAdminService(BaseService):
@@ -37,16 +39,39 @@ class NotificationLogsAdminService(BaseService):
                 return {}
         return {}
 
+    async def _fetch_user_map(self, user_ids) -> Dict[UUID, str]:
+        if not user_ids:
+            return {}
+        result = await self.session.execute(
+            select(User.id, User.full_name).where(User.id.in_(user_ids))
+        )
+        return {uid: name for uid, name in result}
+
+    async def _fetch_event_map(self, master_ids) -> Dict[UUID, str]:
+        if not master_ids:
+            return {}
+        result = await self.session.execute(
+            select(NotificationMaster.id, NotificationMaster.event_code).where(
+                NotificationMaster.id.in_(master_ids)
+            )
+        )
+        return {mid: code for mid, code in result}
+
     async def get_by_id(self, id: UUID) -> Optional[NotificationLogResponse]:
         """Get notification log by ID."""
         row = await self.repository.get_by_id(id)
         if not row:
             return None
 
+        user_map = await self._fetch_user_map([row.user_id])
+        event_map = await self._fetch_event_map([row.notification_master_id])
+
         return NotificationLogResponse(
             id=row.id,
             user_id=row.user_id,
+            user_name=user_map.get(row.user_id),
             notification_master_id=row.notification_master_id,
+            event_code=event_map.get(row.notification_master_id),
             notification_setting_id=row.notification_setting_id,
             channel=row.channel,
             expo_push_token=row.expo_push_token,
@@ -83,11 +108,18 @@ class NotificationLogsAdminService(BaseService):
             additional_filters=filters or {},
         )
 
+        user_ids = list({row.user_id for row in rows})
+        master_ids = list({row.notification_master_id for row in rows})
+        user_map = await self._fetch_user_map(user_ids)
+        event_map = await self._fetch_event_map(master_ids)
+
         items = [
             NotificationLogResponse(
                 id=row.id,
                 user_id=row.user_id,
+                user_name=user_map.get(row.user_id),
                 notification_master_id=row.notification_master_id,
+                event_code=event_map.get(row.notification_master_id),
                 notification_setting_id=row.notification_setting_id,
                 channel=row.channel,
                 expo_push_token=row.expo_push_token,

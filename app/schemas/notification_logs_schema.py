@@ -77,7 +77,9 @@ class NotificationLogResponse(BaseResponse):
 
     id: UUID = Field(..., description="Notification log ID")
     user_id: UUID = Field(..., description="Target user ID")
+    user_name: Optional[str] = Field(None, description="Target user full name (enriched)")
     notification_master_id: UUID = Field(..., description="Master template ID")
+    event_code: Optional[str] = Field(None, description="Notification event code (enriched)")
     notification_setting_id: Optional[UUID] = Field(None, description="Settings row used")
     channel: str = Field(..., description="Delivery channel")
     expo_push_token: Optional[str] = Field(None, description="Token used for send")

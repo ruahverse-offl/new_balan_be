@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
     #: Legacy env name; used only if ``GOOGLE_APPLICATION_CREDENTIALS`` is unset (same JSON key file).
     GCS_CREDENTIALS_PATH: Optional[str] = None
+    #: Firebase Admin SDK service account for FCM push notifications.
+    FCM_CREDENTIALS_PATH: Optional[str] = None
 
     AZURE_STORAGE_CONNECTION_STRING: Optional[str] = None
     AZURE_STORAGE_CONTAINER_NAME: Optional[str] = None
@@ -81,10 +83,6 @@ class Settings(BaseSettings):
     DELIVERY_STATE: str = "State"
     DELIVERY_PINCODE: str = ""
     DELIVERY_COUNTRY: str = "India"
-
-    #: Expo Push API (delivery agent app). Optional bearer for higher rate limits.
-    EXPO_PUSH_API_URL: str = "https://exp.host/--/api/v2/push/send"
-    EXPO_ACCESS_TOKEN: Optional[str] = None
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -119,6 +117,16 @@ class Settings(BaseSettings):
         directory still finds ``./service-account.json``. Returns ``None`` if both unset (use ADC).
         """
         raw = (self.GOOGLE_APPLICATION_CREDENTIALS or "").strip() or (self.GCS_CREDENTIALS_PATH or "").strip()
+        if not raw:
+            return None
+        p = Path(raw)
+        if not p.is_absolute():
+            p = (_BACKEND_ROOT / p).resolve()
+        return p
+
+    def resolved_fcm_credentials_path(self) -> Optional[Path]:
+        """Service account JSON path for Firebase FCM (separate from GCS credentials)."""
+        raw = (self.FCM_CREDENTIALS_PATH or "").strip()
         if not raw:
             return None
         p = Path(raw)

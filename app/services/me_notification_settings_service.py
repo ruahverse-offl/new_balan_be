@@ -1,5 +1,5 @@
 """
-Register / upsert Expo push device rows for the current user (``M_notification_settings``).
+Register / upsert FCM device token rows for the current user (``M_notification_settings``).
 """
 
 from uuid import UUID

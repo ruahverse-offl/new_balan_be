@@ -6,9 +6,10 @@ uvicorn[standard]==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 pydantic[email]==2.5.0
+email-validator==2.3.0
 
 # Database
-sqlalchemy[asyncio]==2.0.36
+sqlalchemy[asyncio]==2.0.23
 asyncpg==0.29.0
 cloud-sql-python-connector[asyncpg]>=1.11.0
 
@@ -20,7 +21,7 @@ passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
 aiofiles==23.2.1
 
-# Storage - REMOVED azure, keeping only GCS
+# Storage
 google-cloud-storage==2.18.2
 
 # Environment variables
@@ -28,6 +29,9 @@ python-dotenv==1.0.0
 
 # HTTP Client
 httpx==0.25.0
+
+# FCM HTTP v1
+google-auth==2.29.0
 
 # Payments
 razorpay==1.4.1

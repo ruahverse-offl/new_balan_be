@@ -11,12 +11,12 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import NotificationMaster, Order
+from app.db.models import Order
 from app.repositories.notification_logs_repository import NotificationLogsRepository
 from app.repositories.notification_master_repository import NotificationMasterRepository
 from app.repositories.notification_settings_repository import NotificationSettingsRepository
@@ -30,6 +30,16 @@ _DEFAULT_CHANNEL_TEMPLATES = {
         "title_template": "New delivery assigned",
         "body_template": "Order {{order_reference}} for {{customer_name}}. Open the app to view.",
         "message_variables": ["order_reference", "customer_name", "order_status", "delivery_address"],
+        "is_enabled": True,
+    }
+}
+
+_CANCEL_EVENT_CODE = "ORDER_CANCELLED_DELIVERY"
+_CANCEL_DEFAULT_CHANNEL_TEMPLATES = {
+    "push": {
+        "title_template": "Order cancelled",
+        "body_template": "Order {{order_reference}} for {{customer_name}} has been cancelled by staff.",
+        "message_variables": ["order_reference", "customer_name"],
         "is_enabled": True,
     }
 }
@@ -70,51 +80,41 @@ class DeliveryAssignmentPushService:
         self._settings_repo = NotificationSettingsRepository(session)
         self._logs_repo = NotificationLogsRepository(session)
 
-    async def _ensure_master(self, audit_user_id: UUID, audit_ip: str) -> Optional[NotificationMaster]:
-        existing = await self._master_repo.get_active_by_event_code(_EVENT_CODE)
-        if existing:
-            return existing
-        try:
-            row = await self._master_repo.create(
-                {
-                    "event_code": _EVENT_CODE,
-                    "event_name": "Delivery assigned",
-                    "description": "Fired when staff assigns or reassigns a delivery agent",
-                    "channel_templates": json.dumps(_DEFAULT_CHANNEL_TEMPLATES),
-                    "is_active": True,
-                },
-                audit_user_id,
-                audit_ip,
-            )
-            await self.session.flush()
-            return row
-        except Exception:
-            logger.exception(
-                "Could not create notification master for %s; push skipped", _EVENT_CODE
-            )
-            return None
-
-    async def notify_agent_assigned(
+    async def _send_push_to_agent(
         self,
         *,
+        event_code: str,
+        default_templates: Dict[str, Any],
         agent_user_id: UUID,
         order: Order,
         audit_user_id: UUID,
         audit_ip: str,
     ) -> None:
-        """
-        Load templates and device tokens, send FCM push(es), write ``T_notification_logs``.
-
-        Accepts:
-            agent_user_id — delivery agent ``M_users.id``
-            order — persisted order row (assignment already saved)
-            audit_user_id / audit_ip — staff actor for log / master seed rows
-
-        Returns:
-            None. Never raises to callers.
-        """
+        """Shared FCM push logic — load template, send to all agent devices, log each attempt."""
         try:
-            master = await self._ensure_master(audit_user_id, audit_ip)
+            existing = await self._master_repo.get_active_by_event_code(event_code)
+            if existing:
+                master = existing
+            else:
+                try:
+                    master = await self._master_repo.create(
+                        {
+                            "event_code": event_code,
+                            "event_name": default_templates.get("_event_name", event_code),
+                            "description": default_templates.get("_description", ""),
+                            "channel_templates": json.dumps(
+                                {k: v for k, v in default_templates.items() if not k.startswith("_")}
+                            ),
+                            "is_active": True,
+                        },
+                        audit_user_id,
+                        audit_ip,
+                    )
+                    await self.session.flush()
+                except Exception:
+                    logger.exception("Could not create notification master for %s; push skipped", event_code)
+                    return
+
             if not master:
                 return
 
@@ -124,66 +124,31 @@ class DeliveryAssignmentPushService:
                 channels = {}
             push_cfg = channels.get("push") if isinstance(channels, dict) else {}
             if isinstance(push_cfg, dict) and push_cfg.get("is_enabled") is False:
-                logger.info("Push disabled in master for %s; skipping", _EVENT_CODE)
+                logger.info("Push disabled in master for %s; skipping", event_code)
                 return
 
             ctx = _order_context(order)
-            title_t = (push_cfg or {}).get("title_template") or _DEFAULT_CHANNEL_TEMPLATES["push"][
-                "title_template"
-            ]
-            body_t = (push_cfg or {}).get("body_template") or _DEFAULT_CHANNEL_TEMPLATES["push"][
-                "body_template"
-            ]
+            fallback_push = default_templates.get("push", {})
+            title_t = (push_cfg or {}).get("title_template") or fallback_push.get("title_template", "")
+            body_t = (push_cfg or {}).get("body_template") or fallback_push.get("body_template", "")
             title = _render_template(str(title_t), ctx)
             body = _render_template(str(body_t), ctx)
 
             payload_for_inbox = json.dumps(
-                {"title": title, "body": body, "orderId": str(order.id), "event": _EVENT_CODE},
+                {"title": title, "body": body, "orderId": str(order.id), "event": event_code},
                 default=str,
             )
-
-            data_payload = {
-                "orderId": str(order.id),
-                "event": _EVENT_CODE,
-            }
+            str_data = {"orderId": str(order.id), "event": event_code}
 
             settings_rows = await self._settings_repo.list_push_enabled_for_user(agent_user_id)
             if not settings_rows:
                 logger.info(
-                    "No push-enabled device tokens for delivery agent user_id=%s; assignment push skipped",
-                    agent_user_id,
+                    "No push-enabled device tokens for user_id=%s; %s push skipped",
+                    agent_user_id, event_code,
                 )
                 return
 
             now_utc = datetime.now(timezone.utc)
-
-            async def _log_push(
-                *,
-                token_used: str,
-                setting_id: Optional[UUID],
-                ok: bool,
-                provider_blob: Any,
-                err_text: Optional[str],
-            ) -> None:
-                await self._logs_repo.create(
-                    {
-                        "user_id": agent_user_id,
-                        "notification_master_id": master.id,
-                        "notification_setting_id": setting_id,
-                        "channel": "push",
-                        "expo_push_token": token_used or None,
-                        "payload_snapshot": payload_for_inbox,
-                        "send_status": "sent" if ok else "failed",
-                        "provider_response": json.dumps(provider_blob, default=str)[:8000],
-                        "error_message": err_text[:2000] if err_text else None,
-                        "retry_count": 0,
-                        "sent_at": now_utc if ok else None,
-                    },
-                    audit_user_id,
-                    audit_ip,
-                )
-
-            str_data = {k: str(v) for k, v in data_payload.items()}
 
             for s in settings_rows:
                 fcm_token = (s.expo_push_token or "").strip()
@@ -198,19 +163,72 @@ class DeliveryAssignmentPushService:
                 )
                 ok = bool(fcm_result.get("ok"))
                 err_text: Optional[str] = None if ok else str(fcm_result.get("message") or "fcm_failed")
-                await _log_push(
-                    token_used=fcm_token,
-                    setting_id=s.id,
-                    ok=ok,
-                    provider_blob=fcm_result,
-                    err_text=err_text,
+                await self._logs_repo.create(
+                    {
+                        "user_id": agent_user_id,
+                        "notification_master_id": master.id,
+                        "notification_setting_id": s.id,
+                        "channel": "push",
+                        "expo_push_token": fcm_token or None,
+                        "payload_snapshot": payload_for_inbox,
+                        "send_status": "sent" if ok else "failed",
+                        "provider_response": json.dumps(fcm_result, default=str)[:8000],
+                        "error_message": err_text[:2000] if err_text else None,
+                        "retry_count": 0,
+                        "sent_at": now_utc if ok else None,
+                    },
+                    audit_user_id,
+                    audit_ip,
                 )
 
             await self.session.flush()
 
         except Exception:
             logger.exception(
-                "Delivery assignment push failed (order_id=%s agent=%s)",
-                getattr(order, "id", None),
-                agent_user_id,
+                "%s push failed (order_id=%s agent=%s)",
+                event_code, getattr(order, "id", None), agent_user_id,
             )
+
+    async def notify_agent_assigned(
+        self,
+        *,
+        agent_user_id: UUID,
+        order: Order,
+        audit_user_id: UUID,
+        audit_ip: str,
+    ) -> None:
+        """Send FCM push when an order is assigned or reassigned to a delivery agent."""
+        await self._send_push_to_agent(
+            event_code=_EVENT_CODE,
+            default_templates={
+                **_DEFAULT_CHANNEL_TEMPLATES,
+                "_event_name": "Delivery assigned",
+                "_description": "Fired when staff assigns or reassigns a delivery agent",
+            },
+            agent_user_id=agent_user_id,
+            order=order,
+            audit_user_id=audit_user_id,
+            audit_ip=audit_ip,
+        )
+
+    async def notify_order_cancelled(
+        self,
+        *,
+        agent_user_id: UUID,
+        order: Order,
+        audit_user_id: UUID,
+        audit_ip: str,
+    ) -> None:
+        """Send FCM push to the assigned delivery agent when staff cancels an in-progress order."""
+        await self._send_push_to_agent(
+            event_code=_CANCEL_EVENT_CODE,
+            default_templates={
+                **_CANCEL_DEFAULT_CHANNEL_TEMPLATES,
+                "_event_name": "Order cancelled",
+                "_description": "Fired when staff cancels an order that has a delivery agent assigned",
+            },
+            agent_user_id=agent_user_id,
+            order=order,
+            audit_user_id=audit_user_id,
+            audit_ip=audit_ip,
+        )

@@ -356,25 +356,31 @@ class OrdersService(BaseService):
                 )
             patch["delivery_assigned_at"] = get_current_ist_time()
 
-        # Resolve agent for push — must mirror validation (assignment may reuse existing order.agent id).
-        notify_delivery_agent_id: Optional[UUID] = None
+        # Resolve push targets — only set for events the delivery agent must know about.
+        notify_assigned_agent_id: Optional[UUID] = None   # fires DELIVERY_ASSIGNED push
+        notify_cancelled_agent_id: Optional[UUID] = None  # fires ORDER_CANCELLED_DELIVERY push
         if new_status == lc.DELIVERY_ASSIGNED:
-            notify_delivery_agent_id = patch.get("delivery_assigned_user_id") or order.delivery_assigned_user_id
+            notify_assigned_agent_id = patch.get("delivery_assigned_user_id") or order.delivery_assigned_user_id
         elif "delivery_assigned_user_id" in patch:
-            notify_delivery_agent_id = patch.get("delivery_assigned_user_id")
+            notify_assigned_agent_id = patch.get("delivery_assigned_user_id")
+        elif new_status == lc.CANCELLED_BY_STAFF:
+            notify_cancelled_agent_id = getattr(order, "delivery_assigned_user_id", None)
 
         order = await self.repository.update(order_id, patch, updated_by, updated_ip)
         if not order:
             return None
 
-        nid = getattr(order, "delivery_assigned_user_id", None)
-        if nid is None:
-            nid = notify_delivery_agent_id
-
-        if nid is not None:
-            push_svc = DeliveryAssignmentPushService(self.session)
+        push_svc = DeliveryAssignmentPushService(self.session)
+        if notify_assigned_agent_id is not None:
             await push_svc.notify_agent_assigned(
-                agent_user_id=nid,
+                agent_user_id=notify_assigned_agent_id,
+                order=order,
+                audit_user_id=updated_by,
+                audit_ip=updated_ip,
+            )
+        if notify_cancelled_agent_id is not None:
+            await push_svc.notify_order_cancelled(
+                agent_user_id=notify_cancelled_agent_id,
                 order=order,
                 audit_user_id=updated_by,
                 audit_ip=updated_ip,

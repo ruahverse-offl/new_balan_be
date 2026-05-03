@@ -554,6 +554,11 @@ async def initiate_razorpay_payment(
         )
 
     if data.applied_coupons:
+        if len(data.applied_coupons) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only one coupon can be applied per order.",
+            )
         applied_sum = sum(ac.discount_amount for ac in data.applied_coupons)
         if abs(applied_sum - data.discount_amount) > 0.01:
             raise HTTPException(
@@ -776,6 +781,11 @@ async def mock_initiate_payment(
     _validate_checkout_amounts(data, ds)
 
     if data.applied_coupons:
+        if len(data.applied_coupons) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only one coupon can be applied per order.",
+            )
         applied_sum = sum(ac.discount_amount for ac in data.applied_coupons)
         if abs(applied_sum - data.discount_amount) > 0.01:
             raise HTTPException(

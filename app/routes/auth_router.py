@@ -5,7 +5,6 @@ FastAPI routes for authentication (login, register, token refresh, logout, passw
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel, Field
 
 from uuid import UUID
 from app.db.db_connection import get_db
@@ -15,9 +14,10 @@ from sqlalchemy import case, or_, select
 from app.schemas.auth_schema import (
     LoginRequest,
     RegisterRequest,
+    ChangePasswordRequest,
     AuthResponse,
     RefreshTokenRequest,
-    TokenResponse
+    TokenResponse,
 )
 from app.utils.auth import get_current_user_id
 from app.utils.rbac import RBACService
@@ -43,11 +43,6 @@ _blacklisted_tokens: set = set()
 
 def is_token_blacklisted(token: str) -> bool:
     return token in _blacklisted_tokens
-
-
-class ChangePasswordRequest(BaseModel):
-    current_password: str = Field(..., min_length=6)
-    new_password: str = Field(..., min_length=6)
 
 
 @router.post("/login", status_code=status.HTTP_200_OK, response_model=AuthResponse)

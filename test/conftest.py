@@ -125,7 +125,7 @@ def sample_user_data() -> dict:
         "full_name": "Test User",
         "mobile_number": "9876543210",
         "email": "testuser@example.com",
-        "password": "testpass123",
+        "password": "Testpass@123",
         "is_active": True,
     }
 

@@ -30,9 +30,9 @@ async def create_polyclinic_test(
     data: PolyclinicTestCreateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_module_action("medicines", "create"))
+    current_user_id: UUID = Depends(require_module_action("clinic", "create"))
 ):
-    """Create a new polyclinic test. Requires MEDICINE_CREATE permission."""
+    """Create a new polyclinic test. Requires ``clinic`` module create permission."""
     ip_address = get_client_ip(request)
     service = PolyclinicTestsService(db)
     test = await service.create_polyclinic_test(data, current_user_id, ip_address)
@@ -80,9 +80,9 @@ async def update_polyclinic_test(
     data: PolyclinicTestUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_module_action("medicines", "update"))
+    current_user_id: UUID = Depends(require_module_action("clinic", "update"))
 ):
-    """Update a polyclinic test. Requires MEDICINE_UPDATE permission."""
+    """Update a polyclinic test. Requires ``clinic`` module update permission."""
     ip_address = get_client_ip(request)
     service = PolyclinicTestsService(db)
     test = await service.update_polyclinic_test(test_id, data, current_user_id, ip_address)
@@ -99,9 +99,9 @@ async def delete_polyclinic_test(
     test_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_module_action("medicines", "delete"))
+    current_user_id: UUID = Depends(require_module_action("clinic", "delete"))
 ):
-    """Soft delete a polyclinic test. Requires MEDICINE_DELETE permission."""
+    """Soft delete a polyclinic test. Requires ``clinic`` module delete permission."""
     ip_address = get_client_ip(request)
     service = PolyclinicTestsService(db)
     deleted = await service.delete_polyclinic_test(test_id, current_user_id, ip_address)

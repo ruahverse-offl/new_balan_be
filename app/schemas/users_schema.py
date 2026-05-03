@@ -4,10 +4,11 @@ Pydantic models for users resource
 """
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from datetime import datetime
 from uuid import UUID
 from app.schemas.common import ListResponse, BaseCreateRequest, BaseUpdateRequest, BaseResponse
+from app.utils.password_policy import assert_password_meets_policy
 
 
 class UserCreateRequest(BaseCreateRequest):
@@ -20,19 +21,30 @@ class UserCreateRequest(BaseCreateRequest):
     password: Optional[str] = Field(None, description="Plain password (hashed by backend); required if password_hash not set")
     password_hash: Optional[str] = Field(None, description="Pre-hashed password (optional; if password is sent it is hashed instead)")
     # is_active is automatically set to True by the backend
-    
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        s = v.strip() if isinstance(v, str) else str(v).strip()
+        if not s:
+            return None
+        assert_password_meets_policy(s)
+        return s
+
     model_config = {"json_schema_extra": {"example": {
         "role_id": "b1f9e123-4567-8901-2345-678901234567",
         "full_name": "Rahul Sharma",
         "mobile_number": "9876543210",
         "email": "rahul@gmail.com",
-        "password": "secret123"
+        "password": "Secret@123"
     }}}
 
 
 class UserUpdateRequest(BaseUpdateRequest):
     """Request model for updating a user."""
-    
+
     role_id: Optional[UUID] = Field(None, description="Role ID")
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     mobile_number: Optional[str] = Field(None, max_length=15, description="Mobile number")
@@ -40,7 +52,22 @@ class UserUpdateRequest(BaseUpdateRequest):
     password: Optional[str] = Field(None, description="New plain password (hashed by backend)")
     password_hash: Optional[str] = Field(None, description="Pre-hashed password")
     is_active: Optional[bool] = Field(None, description="Whether the user is active")
-    
+    current_password: Optional[str] = Field(
+        None,
+        description="Account password — required when updating your own name, email, or phone",
+    )
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        s = v.strip() if isinstance(v, str) else str(v).strip()
+        if not s:
+            return None
+        assert_password_meets_policy(s)
+        return s
+
     model_config = {"json_schema_extra": {"example": {
         "role_id": "b1f9e123-4567-8901-2345-678901234567",
         "full_name": "Rahul Kumar Sharma",

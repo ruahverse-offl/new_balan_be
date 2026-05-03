@@ -4,7 +4,9 @@ Pydantic models for authentication requests and responses
 """
 
 from uuid import UUID
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
+
+from app.utils.password_policy import assert_password_meets_policy
 
 
 class LoginRequest(BaseModel):
@@ -14,10 +16,27 @@ class LoginRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8)
     full_name: str = Field(..., min_length=1)
     mobile_number: str = Field(..., min_length=10, max_length=15)
     # role_id is ignored: signup assigns PUBLIC (preferred) or legacy CUSTOMER — end-customer roles for logged-in checkout
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        assert_password_meets_policy(v)
+        return v.strip()
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1)
+    new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password_strength(cls, v: str) -> str:
+        assert_password_meets_policy(v)
+        return v.strip()
 
 
 class UserAuthResponse(BaseModel):

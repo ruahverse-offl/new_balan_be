@@ -23,9 +23,12 @@ from app.schemas.users_schema import (
 )
 from app.schemas.common import PaginationResponse
 from app.services.base_service import BaseService
-from app.utils.password import hash_password
+from app.utils.password import hash_password, verify_password
 
 logger = logging.getLogger(__name__)
+
+NIL_UUID = UUID("00000000-0000-0000-0000-000000000000")
+_PROFILE_FIELDS_REQUIRING_PASSWORD = frozenset({"full_name", "email", "mobile_number"})
 
 
 class UsersService(BaseService):
@@ -158,7 +161,35 @@ class UsersService(BaseService):
     ) -> Optional[UserResponse]:
         """Update a user."""
         logger.info(f"Updating user: {user_id}")
-        update_data = {k: v for k, v in data.model_dump().items() if v is not None}
+        raw = data.model_dump(exclude_unset=True)
+        current_password = raw.pop("current_password", None)
+        update_data = {k: v for k, v in raw.items() if v is not None}
+
+        touches_profile = bool(_PROFILE_FIELDS_REQUIRING_PASSWORD.intersection(update_data.keys()))
+        is_self = (
+            updated_by is not None
+            and updated_by != NIL_UUID
+            and user_id == updated_by
+        )
+        if is_self and touches_profile:
+            pw = (current_password or "").strip()
+            if not pw:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Current password is required to update your profile.",
+                )
+            target = await self.repository.get_by_id(user_id)
+            if not target or not target.password_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Unable to verify account password.",
+                )
+            if not verify_password(pw, target.password_hash):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Current password is incorrect.",
+                )
+
         if update_data.get("password"):
             update_data["password_hash"] = hash_password(update_data.pop("password"))
         update_data.pop("password", None)

@@ -111,17 +111,36 @@ async def put_role_matrix(
         any_flag = row.can_create or row.can_read or row.can_update or row.can_delete
         if not any_flag:
             continue
-        db.add(
-            ModuleRolePermission(
-                module_id=row.module_id,
-                role_id=data.role_id,
-                can_create=row.can_create,
-                can_read=row.can_read,
-                can_update=row.can_update,
-                can_delete=row.can_delete,
-                created_by=current_user_id,
-                created_ip=ip,
+        # Unique (module_id, role_id) includes soft-deleted rows — revive/update instead of INSERT.
+        prev = (
+            await db.execute(
+                select(ModuleRolePermission).where(
+                    ModuleRolePermission.role_id == data.role_id,
+                    ModuleRolePermission.module_id == mid,
+                )
             )
-        )
+        ).scalar_one_or_none()
+        if prev:
+            prev.can_create = row.can_create
+            prev.can_read = row.can_read
+            prev.can_update = row.can_update
+            prev.can_delete = row.can_delete
+            prev.is_deleted = False
+            prev.is_active = True
+            prev.updated_by = current_user_id
+            prev.updated_ip = ip
+        else:
+            db.add(
+                ModuleRolePermission(
+                    module_id=row.module_id,
+                    role_id=data.role_id,
+                    can_create=row.can_create,
+                    can_read=row.can_read,
+                    can_update=row.can_update,
+                    can_delete=row.can_delete,
+                    created_by=current_user_id,
+                    created_ip=ip,
+                )
+            )
     await db.flush()
     return await _load_matrix(db, data.role_id)

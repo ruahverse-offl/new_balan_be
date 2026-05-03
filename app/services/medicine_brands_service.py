@@ -62,6 +62,7 @@ class MedicineBrandsService(BaseService):
             raise ValueError("Duplicate medicine+brand pair or invalid foreign key") from e
         if not row:
             return None
+        await ensure_inventory_row(self.session, offering_id, updated_by, updated_ip)
         name = await self._brand_name(row.brand_id)
         return self._to_response(row, name)
 

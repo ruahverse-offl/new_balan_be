@@ -22,6 +22,50 @@ from app.db.models import (
 
 logger = logging.getLogger(__name__)
 
+# Audit identity for automatic inventory row creation on catalog reads (legacy backfill).
+SYSTEM_ACTOR_ID = UUID("00000000-0000-0000-0000-000000000001")
+INVENTORY_SYSTEM_IP = "127.0.0.1"
+
+
+async def ensure_inventory_rows_for_offerings(
+    session: AsyncSession,
+    offering_ids: list[UUID],
+    created_by: UUID,
+    created_ip: str,
+) -> int:
+    """
+    Insert ``M_inventory`` rows with ``stock_quantity=0`` for any medicine–brand offering ids
+    that do not already have an active inventory row.
+
+    Returns the number of rows inserted (0 if all already existed).
+    """
+    if not offering_ids:
+        return 0
+    uniq = list(dict.fromkeys(offering_ids))
+    r = await session.execute(
+        select(Inventory.medicine_brand_offering_id).where(
+            Inventory.medicine_brand_offering_id.in_(uniq),
+            Inventory.is_deleted == False,  # noqa: E712
+        )
+    )
+    have = set(r.scalars().all())
+    inserted = 0
+    for oid in uniq:
+        if oid in have:
+            continue
+        session.add(
+            Inventory(
+                medicine_brand_offering_id=oid,
+                stock_quantity=0,
+                created_by=created_by,
+                created_ip=created_ip,
+            )
+        )
+        inserted += 1
+    if inserted:
+        await session.flush()
+    return inserted
+
 
 async def ensure_inventory_row(
     session: AsyncSession,
@@ -30,24 +74,14 @@ async def ensure_inventory_row(
     created_ip: str,
 ) -> Inventory:
     """Return existing row or insert one with stock 0."""
+    await ensure_inventory_rows_for_offerings(session, [offering_id], created_by, created_ip)
     q = await session.execute(
         select(Inventory).where(
             Inventory.medicine_brand_offering_id == offering_id,
             Inventory.is_deleted == False,  # noqa: E712
         )
     )
-    row = q.scalar_one_or_none()
-    if row:
-        return row
-    inv = Inventory(
-        medicine_brand_offering_id=offering_id,
-        stock_quantity=0,
-        created_by=created_by,
-        created_ip=created_ip,
-    )
-    session.add(inv)
-    await session.flush()
-    return inv
+    return q.scalar_one()
 
 
 async def get_stock_map(session: AsyncSession, offering_ids: list[UUID]) -> dict[UUID, int]:

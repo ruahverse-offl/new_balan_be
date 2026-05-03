@@ -116,6 +116,13 @@ class MedicinesService(BaseService):
             grouped = await self._fetch_offerings_grouped_by_medicine_id([medicine_id])
             pairs = grouped.get(medicine_id, [])
             oids = [o.id for o, _ in pairs]
+            if oids:
+                await inventory_service.ensure_inventory_rows_for_offerings(
+                    self.session,
+                    oids,
+                    inventory_service.SYSTEM_ACTOR_ID,
+                    inventory_service.INVENTORY_SYSTEM_IP,
+                )
             stock_map = await inventory_service.get_stock_map(self.session, oids)
             medicine_dict["brands"] = [
                 self._to_brand_summary(o, bn, stock_map.get(o.id, 0)) for o, bn in pairs
@@ -160,7 +167,15 @@ class MedicinesService(BaseService):
             all_oids: list[UUID] = []
             for _mid, plist in offerings_by_mid.items():
                 all_oids.extend([o.id for o, _ in plist])
-            stock_map = await inventory_service.get_stock_map(self.session, list(dict.fromkeys(all_oids)))
+            uniq_oids = list(dict.fromkeys(all_oids))
+            if uniq_oids:
+                await inventory_service.ensure_inventory_rows_for_offerings(
+                    self.session,
+                    uniq_oids,
+                    inventory_service.SYSTEM_ACTOR_ID,
+                    inventory_service.INVENTORY_SYSTEM_IP,
+                )
+            stock_map = await inventory_service.get_stock_map(self.session, uniq_oids)
         medicine_responses = []
         for m in medicines:
             d = self._model_to_dict(m)

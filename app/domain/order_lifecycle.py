@@ -25,6 +25,7 @@ OUT_FOR_DELIVERY = "OUT_FOR_DELIVERY"
 DELIVERED = "DELIVERED"
 
 CANCELLED_BY_STAFF = "CANCELLED_BY_STAFF"
+CANCELLED_BY_CUSTOMER = "CANCELLED_BY_CUSTOMER"
 DELIVERY_RETURNED = "DELIVERY_RETURNED"
 
 # Payment / admin (unchanged from existing flows)
@@ -43,10 +44,16 @@ ALL_STATUSES: FrozenSet[str] = frozenset(
         OUT_FOR_DELIVERY,
         DELIVERED,
         CANCELLED_BY_STAFF,
+        CANCELLED_BY_CUSTOMER,
         DELIVERY_RETURNED,
         REFUND_INITIATED,
         REFUNDED,
     }
+)
+
+# Customer can self-cancel up to (but not including) PARCEL_TAKEN — i.e. before the parcel is packed.
+CUSTOMER_CANCELLABLE_STATUSES: FrozenSet[str] = frozenset(
+    {ORDER_RECEIVED, ORDER_TAKEN, ORDER_PROCESSING, DELIVERY_ASSIGNED}
 )
 
 STAFF_TRANSITIONS: dict[str, Set[str]] = {
@@ -70,6 +77,7 @@ TERMINAL_STATUSES: FrozenSet[str] = frozenset(
         PAYMENT_CANCELLED,
         DELIVERED,
         CANCELLED_BY_STAFF,
+        CANCELLED_BY_CUSTOMER,
         DELIVERY_RETURNED,
         REFUND_INITIATED,
         REFUNDED,

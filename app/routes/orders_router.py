@@ -3,13 +3,22 @@ Orders Router
 FastAPI routes for orders resource
 """
 
+import json
+import logging
+from decimal import Decimal
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Literal
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
+from pydantic import BaseModel, Field
+from sqlalchemy import select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.db_connection import get_db
+from app.db.models import Order, Payment
 from app.services.orders_service import OrdersService
+from app.services import inventory_service
+from app.services.razorpay_service import process_refund
 from app.schemas.orders_schema import (
     OrderCreateRequest,
     OrderUpdateRequest,
@@ -21,6 +30,10 @@ from app.schemas.orders_schema import (
 from app.utils.auth import get_current_user_id, get_current_user_id_optional
 from app.utils.rbac import RBACService
 from app.utils.request_utils import get_client_ip
+from app.domain import order_lifecycle as lc
+
+logger = logging.getLogger(__name__)
+IST = timezone(timedelta(hours=5, minutes=30))
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
@@ -241,6 +254,144 @@ async def update_order(
             detail=f"Order with ID {order_id} not found"
         )
     return order
+
+
+class CustomerCancelRequest(BaseModel):
+    cancellation_reason: Optional[str] = Field(None, max_length=1000)
+
+
+class CustomerCancelResponse(BaseModel):
+    order_id: str
+    order_status: str
+    refund_initiated: bool = False
+    refund_status: Optional[str] = None
+    message: str
+
+
+@router.post("/{order_id}/cancel", response_model=CustomerCancelResponse)
+async def customer_cancel_order(
+    order_id: UUID,
+    data: CustomerCancelRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user_id: UUID = Depends(get_current_user_id),
+):
+    """
+    Customer self-cancellation. Allowed while order is in ORDER_RECEIVED / ORDER_TAKEN /
+    ORDER_PROCESSING / DELIVERY_ASSIGNED — i.e. before the parcel is physically packed.
+    If the payment was already captured, a full Razorpay refund is initiated automatically.
+    """
+    result = await db.execute(
+        select(Order).where(Order.id == order_id, Order.is_deleted == False)  # noqa: E712
+    )
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Order not found.")
+
+    if str(order.customer_id) != str(current_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only cancel your own orders.",
+        )
+
+    current_status = lc.normalize_order_status(order.order_status)
+    if current_status not in lc.CUSTOMER_CANCELLABLE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This order can no longer be cancelled. "
+                "Cancellation is only allowed before the parcel is packed."
+            ),
+        )
+
+    reason = (data.cancellation_reason or "Cancelled by customer.").strip()
+    ip_address = get_client_ip(request)
+    now_ist = datetime.now(IST)
+
+    await db.execute(
+        sa_update(Order)
+        .where(Order.id == order_id)
+        .values(
+            order_status=lc.CANCELLED_BY_CUSTOMER,
+            cancellation_reason=reason,
+            cancelled_by_user_id=current_user_id,
+            cancelled_at=now_ist,
+            updated_by=current_user_id,
+            updated_ip=ip_address,
+        )
+    )
+
+    await inventory_service.restore_stock_for_order(db, order_id, current_user_id, ip_address)
+
+    refund_initiated = False
+    refund_status_val: Optional[str] = None
+    final_order_status = lc.CANCELLED_BY_CUSTOMER
+
+    payment_result = await db.execute(select(Payment).where(Payment.order_id == order_id))
+    payment = payment_result.scalar_one_or_none()
+
+    if (
+        payment
+        and payment.payment_status == "SUCCESS"
+        and payment.gateway_transaction_id
+        and not (payment.gateway_order_id and str(payment.gateway_order_id).startswith("mock_"))
+        and (not payment.refund_status or payment.refund_status.upper() == "NONE")
+    ):
+        try:
+            refund_response = process_refund(str(payment.gateway_transaction_id), None)
+            r_status = "COMPLETED" if refund_response.get("status") == "processed" else "INITIATED"
+            final_order_status = lc.REFUNDED if r_status == "COMPLETED" else lc.REFUND_INITIATED
+            await db.execute(
+                sa_update(Payment)
+                .where(Payment.id == payment.id)
+                .values(
+                    refund_status=r_status,
+                    refund_amount=payment.amount,
+                    refund_transaction_id=str(refund_response.get("id", "")),
+                    gateway_response=json.dumps(refund_response, default=str),
+                    updated_by=current_user_id,
+                    updated_ip=ip_address,
+                )
+            )
+            await db.execute(
+                sa_update(Order)
+                .where(Order.id == order_id)
+                .values(
+                    order_status=final_order_status,
+                    updated_by=current_user_id,
+                    updated_ip=ip_address,
+                )
+            )
+            refund_initiated = True
+            refund_status_val = r_status
+            logger.info(
+                "Customer cancel auto-refund — order=%s refund_status=%s",
+                order_id,
+                r_status,
+            )
+        except Exception as e:
+            logger.error(
+                "Customer cancel auto-refund failed for order=%s: %s",
+                order_id,
+                e,
+                exc_info=True,
+            )
+
+    await db.commit()
+
+    msg = "Order cancelled."
+    if refund_initiated:
+        msg = f"Order cancelled. Refund {refund_status_val.lower()}."
+    elif payment and payment.payment_status == "SUCCESS":
+        msg = "Order cancelled. Please contact support to process your refund."
+
+    return CustomerCancelResponse(
+        order_id=str(order_id),
+        order_status=final_order_status,
+        refund_initiated=refund_initiated,
+        refund_status=refund_status_val,
+        message=msg,
+    )
 
 
 @router.delete("/{order_id}", status_code=status.HTTP_200_OK)

@@ -216,6 +216,59 @@ async def decrease_stock_for_order(
         )
 
 
+async def restore_stock_for_order(
+    session: AsyncSession,
+    order_id: UUID,
+    updated_by: UUID,
+    updated_ip: str,
+) -> None:
+    """
+    Restore inventory for each order line when an order is cancelled.
+    Increments stock back; idempotent and never raises on over-stock.
+    """
+    r = await session.execute(
+        select(OrderItem.medicine_brand_id, OrderItem.quantity).where(
+            OrderItem.order_id == order_id,
+            OrderItem.is_deleted == False,  # noqa: E712
+        )
+    )
+    lines = list(r.all())
+    if not lines:
+        return
+
+    for offering_id, qty in lines:
+        if qty < 1:
+            continue
+        await ensure_inventory_row(session, offering_id, updated_by, updated_ip)
+        await session.execute(
+            update(Inventory)
+            .where(
+                Inventory.medicine_brand_offering_id == offering_id,
+                Inventory.is_deleted == False,  # noqa: E712
+            )
+            .values(
+                stock_quantity=Inventory.stock_quantity + qty,
+                updated_by=updated_by,
+                updated_ip=updated_ip,
+            )
+        )
+        q2 = await session.execute(
+            select(Inventory.stock_quantity).where(
+                Inventory.medicine_brand_offering_id == offering_id,
+                Inventory.is_deleted == False,  # noqa: E712
+            )
+        )
+        new_stock = q2.scalar_one_or_none()
+        if new_stock is not None:
+            await sync_alert_for_offering(session, offering_id, int(new_stock))
+        logger.info(
+            "Inventory restored for offering %s by +%s; new stock=%s",
+            offering_id,
+            qty,
+            new_stock,
+        )
+
+
 async def set_stock_quantity(
     session: AsyncSession,
     offering_id: UUID,

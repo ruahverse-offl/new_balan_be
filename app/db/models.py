@@ -391,3 +391,19 @@ class InventoryAlert(BaseModel):
         UUID(as_uuid=True), ForeignKey("M_medicine_brand_offerings.id"), nullable=False, index=True
     )
     current_stock = Column(Integer, nullable=False)
+
+
+class InsuranceEnquiry(BaseModel):
+    """Customer insurance plan enquiry submitted via the public Insurance page."""
+
+    __tablename__ = "T_insurance_enquiries"
+
+    customer_name = Column(String(255), nullable=False)
+    customer_phone = Column(String(15), nullable=False)
+    customer_age = Column(Integer, nullable=True)
+    family_size = Column(Integer, nullable=True)
+    plan_type = Column(String(100), nullable=True)
+    message = Column(Text, nullable=True)
+    # Admin-managed: PENDING | CONTACTED | CONVERTED | NOT_INTERESTED
+    status = Column(String(50), nullable=False, default="PENDING", server_default=text("'PENDING'"))
+    notes = Column(Text, nullable=True)

@@ -3,9 +3,7 @@ Orders Router
 FastAPI routes for orders resource
 """
 
-import json
 import logging
-from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Literal
 from uuid import UUID
@@ -18,7 +16,6 @@ from app.db.db_connection import get_db
 from app.db.models import Order, Payment
 from app.services.orders_service import OrdersService
 from app.services import inventory_service
-from app.services.razorpay_service import process_refund
 from app.schemas.orders_schema import (
     OrderCreateRequest,
     OrderUpdateRequest,
@@ -279,7 +276,7 @@ async def customer_cancel_order(
     """
     Customer self-cancellation. Allowed while order is in ORDER_RECEIVED / ORDER_TAKEN /
     ORDER_PROCESSING / DELIVERY_ASSIGNED — i.e. before the parcel is physically packed.
-    If the payment was already captured, a full Razorpay refund is initiated automatically.
+    Refunds are processed manually by staff from the admin panel.
     """
     result = await db.execute(
         select(Order).where(Order.id == order_id, Order.is_deleted == False)  # noqa: E712
@@ -323,73 +320,20 @@ async def customer_cancel_order(
 
     await inventory_service.restore_stock_for_order(db, order_id, current_user_id, ip_address)
 
-    refund_initiated = False
-    refund_status_val: Optional[str] = None
-    final_order_status = lc.CANCELLED_BY_CUSTOMER
+    await db.commit()
 
     payment_result = await db.execute(select(Payment).where(Payment.order_id == order_id))
     payment = payment_result.scalar_one_or_none()
 
-    if (
-        payment
-        and payment.payment_status == "SUCCESS"
-        and payment.gateway_transaction_id
-        and not (payment.gateway_order_id and str(payment.gateway_order_id).startswith("mock_"))
-        and (not payment.refund_status or payment.refund_status.upper() == "NONE")
-    ):
-        try:
-            refund_response = process_refund(str(payment.gateway_transaction_id), None)
-            r_status = "COMPLETED" if refund_response.get("status") == "processed" else "INITIATED"
-            final_order_status = lc.REFUNDED if r_status == "COMPLETED" else lc.REFUND_INITIATED
-            await db.execute(
-                sa_update(Payment)
-                .where(Payment.id == payment.id)
-                .values(
-                    refund_status=r_status,
-                    refund_amount=payment.amount,
-                    refund_transaction_id=str(refund_response.get("id", "")),
-                    gateway_response=json.dumps(refund_response, default=str),
-                    updated_by=current_user_id,
-                    updated_ip=ip_address,
-                )
-            )
-            await db.execute(
-                sa_update(Order)
-                .where(Order.id == order_id)
-                .values(
-                    order_status=final_order_status,
-                    updated_by=current_user_id,
-                    updated_ip=ip_address,
-                )
-            )
-            refund_initiated = True
-            refund_status_val = r_status
-            logger.info(
-                "Customer cancel auto-refund — order=%s refund_status=%s",
-                order_id,
-                r_status,
-            )
-        except Exception as e:
-            logger.error(
-                "Customer cancel auto-refund failed for order=%s: %s",
-                order_id,
-                e,
-                exc_info=True,
-            )
-
-    await db.commit()
-
     msg = "Order cancelled."
-    if refund_initiated:
-        msg = f"Order cancelled. Refund {refund_status_val.lower()}."
-    elif payment and payment.payment_status == "SUCCESS":
-        msg = "Order cancelled. Please contact support to process your refund."
+    if payment and payment.payment_status == "SUCCESS":
+        msg = "Order cancelled. If a refund is applicable, our team will process it shortly."
 
     return CustomerCancelResponse(
         order_id=str(order_id),
-        order_status=final_order_status,
-        refund_initiated=refund_initiated,
-        refund_status=refund_status_val,
+        order_status=lc.CANCELLED_BY_CUSTOMER,
+        refund_initiated=False,
+        refund_status=None,
         message=msg,
     )
 

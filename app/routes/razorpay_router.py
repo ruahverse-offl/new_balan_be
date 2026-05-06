@@ -1624,6 +1624,17 @@ async def refund_payment(
     if not payment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment record not found.")
 
+    # Only cancelled/returned orders are eligible for admin refund.
+    _REFUND_ELIGIBLE = {lc.CANCELLED_BY_STAFF, lc.CANCELLED_BY_CUSTOMER, lc.DELIVERY_RETURNED}
+    if lc.normalize_order_status(order.order_status) not in _REFUND_ELIGIBLE:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Refund is only available for cancelled or returned orders. "
+                f"Current status: {order.order_status}."
+            ),
+        )
+
     if payment.payment_status != "SUCCESS":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

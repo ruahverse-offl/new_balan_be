@@ -36,6 +36,9 @@ from app.routes.modules_router import router as modules_router
 from app.routes.rbac_matrix_router import router as rbac_matrix_router
 from app.routes.me_router import router as me_router
 
+# Import insurance enquiries router
+from app.routes.insurance_enquiries_router import router as insurance_enquiries_router
+
 # Import notification routers
 from app.routes.notification_master_router import router as notification_master_router
 from app.routes.notification_settings_router import router as notification_settings_router
@@ -76,6 +79,8 @@ api_router.include_router(inventory_router)
 api_router.include_router(modules_router)
 api_router.include_router(rbac_matrix_router)
 
+api_router.include_router(insurance_enquiries_router)
+
 # Include notification routers
 api_router.include_router(notification_master_router)
 api_router.include_router(notification_settings_router)
@@ -113,4 +118,5 @@ __all__ = [
     "notification_settings_router",
     "notification_logs_router",
     "notification_test_push_router",
+    "insurance_enquiries_router",
 ]

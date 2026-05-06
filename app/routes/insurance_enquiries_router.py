@@ -44,16 +44,16 @@ async def create_enquiry(
 
 @router.get("/", response_model=InsuranceEnquiryListResponse)
 async def list_enquiries(
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     search: Optional[str] = Query(default=None),
     sort_by: Optional[str] = Query(default="created_at"),
     sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
     status: Optional[str] = Query(default=None, description="Filter by status"),
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_module_action("appointments", "read")),
+    _: UUID = Depends(require_module_action("insurance-enquiries", "read")),
 ):
-    """List all insurance enquiries. Requires appointments:read."""
+    """List all insurance enquiries. Requires insurance-enquiries:read."""
     service = InsuranceEnquiriesService(db)
     return await service.get_enquiries_list(
         limit=limit,
@@ -69,9 +69,9 @@ async def list_enquiries(
 async def get_enquiry(
     enquiry_id: UUID,
     db: AsyncSession = Depends(get_db),
-    _: UUID = Depends(require_module_action("appointments", "read")),
+    _: UUID = Depends(require_module_action("insurance-enquiries", "read")),
 ):
-    """Get a single insurance enquiry by ID. Requires appointments:read."""
+    """Get a single insurance enquiry by ID. Requires insurance-enquiries:read."""
     service = InsuranceEnquiriesService(db)
     e = await service.get_enquiry_by_id(enquiry_id)
     if not e:
@@ -88,9 +88,9 @@ async def update_enquiry(
     data: InsuranceEnquiryUpdateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_module_action("appointments", "update")),
+    current_user_id: UUID = Depends(require_module_action("insurance-enquiries", "update")),
 ):
-    """Update status / notes on an enquiry. Requires appointments:update."""
+    """Update status / notes on an enquiry. Requires insurance-enquiries:update."""
     ip = get_client_ip(request)
     service = InsuranceEnquiriesService(db)
     e = await service.update_enquiry(enquiry_id, data, current_user_id, ip)
@@ -108,9 +108,9 @@ async def delete_enquiry(
     enquiry_id: UUID,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user_id: UUID = Depends(require_module_action("appointments", "delete")),
+    current_user_id: UUID = Depends(require_module_action("insurance-enquiries", "delete")),
 ):
-    """Soft-delete an insurance enquiry. Requires appointments:delete."""
+    """Soft-delete an insurance enquiry. Requires insurance-enquiries:delete."""
     ip = get_client_ip(request)
     service = InsuranceEnquiriesService(db)
     deleted = await service.delete_enquiry(enquiry_id, current_user_id, ip)

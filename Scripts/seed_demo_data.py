@@ -106,6 +106,7 @@ MODULE_ROWS: List[Tuple[str, str, int, str]] = [
     ("notification-logs", "Notification Logs", 83, "Bell"),
     ("payments", "Payments", 90, "CreditCard"),
     ("coupon-usages", "Coupon Usages", 100, "BarChart3"),
+    ("insurance-enquiries", "Insurance Enquiries", 45, "ShieldPlus"),
 ]
 
 ROLE_ROWS: List[Tuple[str, str]] = [

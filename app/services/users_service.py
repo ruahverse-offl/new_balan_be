@@ -6,7 +6,7 @@ Business logic layer for users
 from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
+from sqlalchemy import func, select, or_
 from fastapi import HTTPException, status
 import logging
 
@@ -199,6 +199,53 @@ class UsersService(BaseService):
         user_dict = self._model_to_dict(user)
         return UserResponse(**user_dict)
     
+    async def get_customers_list(
+        self,
+        limit: int = 20,
+        offset: int = 0,
+        search: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> UserListResponse:
+        """Return paginated customers (users whose role is CUSTOMER or PUBLIC)."""
+        base = (
+            select(User)
+            .join(Role, Role.id == User.role_id)
+            .where(
+                User.is_deleted == False,  # noqa: E712
+                Role.is_deleted == False,  # noqa: E712
+                Role.name.in_(["CUSTOMER", "PUBLIC"]),
+            )
+        )
+        if search:
+            q = f"%{search.strip()}%"
+            base = base.where(or_(
+                User.full_name.ilike(q),
+                User.mobile_number.ilike(q),
+                User.email.ilike(q),
+            ))
+        total = (await self.session.execute(
+            select(func.count()).select_from(base.subquery())
+        )).scalar_one() or 0
+
+        sort_col = getattr(User, sort_by, None) if sort_by else None
+        if sort_col is None:
+            sort_col = User.created_at
+        if (sort_order or "desc").lower() == "asc":
+            base = base.order_by(sort_col.asc())
+        else:
+            base = base.order_by(sort_col.desc())
+
+        rows = (await self.session.execute(base.limit(limit).offset(offset))).scalars().all()
+        return UserListResponse(
+            items=[UserResponse(**self._model_to_dict(u)) for u in rows],
+            pagination=PaginationResponse(
+                total=total, limit=limit, offset=offset,
+                has_next=(offset + limit) < total,
+                has_previous=offset > 0,
+            ),
+        )
+
     async def delete_user(
         self,
         user_id: UUID,

@@ -128,7 +128,7 @@ class OrdersRepository(BaseRepository[Order]):
                 else_=Decimal("0"),
             )), Decimal("0")).label("returned"),
             func.coalesce(func.sum(case(
-                (self.model.order_status.in_([lc.CANCELLED_BY_STAFF, "CANCELLED"]), self.model.final_amount),
+                (self.model.order_status.in_([lc.CANCELLED_BY_STAFF, lc.CANCELLED_BY_CUSTOMER, "CANCELLED"]), self.model.final_amount),
                 else_=Decimal("0"),
             )), Decimal("0")).label("cancelled"),
             func.coalesce(func.sum(case(
@@ -144,12 +144,12 @@ class OrdersRepository(BaseRepository[Order]):
         returned = row.returned or Decimal("0")
         cancelled = row.cancelled or Decimal("0")
         refunded = row.refunded or Decimal("0")
-        net_revenue = delivered - returned - refunded
+        net_revenue = delivered - cancelled - returned - refunded
         return {
             "delivered_amount": delivered,
             "returned_amount": returned,
             "cancelled_amount": cancelled,
             "refunded_amount": refunded,
             "net_revenue": net_revenue,
-            "net_sales": delivered - returned - cancelled - refunded,
+            "net_sales": net_revenue,
         }

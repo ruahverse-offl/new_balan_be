@@ -177,6 +177,10 @@ async def get_orders_list(
         default=None,
         description="Staff only: `active` = non-terminal orders; `history` = delivered/returned/cancelled/refunded.",
     ),
+    customer_id: Optional[UUID] = Query(
+        default=None,
+        description="Staff only: filter orders by a specific customer's user ID.",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user_id: UUID = Depends(get_current_user_id),
 ):
@@ -198,7 +202,7 @@ async def get_orders_list(
     user_id_filter = None
     delivery_assigned_filter = None
     if has_full_list:
-        user_id_filter = None
+        user_id_filter = customer_id or None
     elif has_delivery_scope:
         delivery_assigned_filter = current_user_id
     else:

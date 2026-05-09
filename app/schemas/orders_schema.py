@@ -194,14 +194,14 @@ class OrderSalesSummaryResponse(BaseModel):
 
     delivered_amount: Decimal = Field(..., description="Sum of final_amount for DELIVERED orders")
     returned_amount: Decimal = Field(..., description="Sum of final_amount for DELIVERY_RETURNED orders")
-    cancelled_amount: Decimal = Field(..., description="Sum of final_amount for CANCELLED_BY_STAFF orders")
+    cancelled_amount: Decimal = Field(..., description="Sum of final_amount for CANCELLED_BY_STAFF and CANCELLED_BY_CUSTOMER orders")
     refunded_amount: Decimal = Field(
         ...,
         description="Sum of final_amount for REFUNDED and REFUND_INITIATED orders",
     )
     net_revenue: Decimal = Field(
         ...,
-        description="delivered − returned − refunded; best headline for realized order value after reversals",
+        description="delivered − cancelled − returned − refunded; realized revenue after all reversals (all orders are prepaid)",
     )
     net_sales: Decimal = Field(
         ...,

@@ -52,6 +52,23 @@ async def list_delivery_agents_for_assignment(
     return await service.list_delivery_agents_for_assignment()
 
 
+@router.get("/customers", response_model=UserListResponse)
+async def get_customers_list(
+    limit: int = Query(default=20, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    search: Optional[str] = Query(default=None),
+    sort_by: Optional[str] = Query(default="created_at"),
+    sort_order: Optional[str] = Query(default="desc", pattern="^(asc|desc)$"),
+    db: AsyncSession = Depends(get_db),
+    _: UUID = Depends(require_module_action("customers", "read")),
+):
+    """List all customer accounts (CUSTOMER + PUBLIC roles). Requires customers:read."""
+    service = UsersService(db)
+    return await service.get_customers_list(
+        limit=limit, offset=offset, search=search, sort_by=sort_by, sort_order=sort_order
+    )
+
+
 @router.get("/", response_model=UserListResponse)
 async def get_users_list(
     limit: int = Query(default=20, ge=1, le=100),

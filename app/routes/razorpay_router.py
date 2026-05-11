@@ -37,6 +37,7 @@ from app.services.razorpay_service import (
     process_refund,
 )
 from app.services import inventory_service
+from app.services.delivery_assignment_push_service import DeliveryAssignmentPushService
 from app.domain import order_lifecycle as lc
 from app.db.models import DeliverySetting
 from app.utils.delivery_pricing import delivery_fee_for_subtotal
@@ -1695,6 +1696,19 @@ async def refund_payment(
         await db.commit()
 
         logger.info("Refund processed — order=%s, refund_id=%s, amount=₹%s", order_id, refund_id, refund_amount)
+
+        # Push notification to customer — fire-and-forget, never blocks the response.
+        if order.customer_id:
+            try:
+                push_svc = DeliveryAssignmentPushService(db)
+                await push_svc.notify_customer_refund_completed(
+                    customer_user_id=order.customer_id,
+                    order=order,
+                    audit_user_id=current_user_id,
+                    audit_ip=ip_address,
+                )
+            except Exception:
+                logger.exception("Refund-completed push failed for order_id=%s", order_id)
 
         return RefundResponse(
             order_id=order_id,

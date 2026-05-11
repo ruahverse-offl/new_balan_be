@@ -44,6 +44,46 @@ _CANCEL_DEFAULT_CHANNEL_TEMPLATES = {
     }
 }
 
+_CANCEL_CUSTOMER_EVENT_CODE = "ORDER_CANCELLED_CUSTOMER"
+_CANCEL_CUSTOMER_DEFAULT_CHANNEL_TEMPLATES = {
+    "push": {
+        "title_template": "Your order has been cancelled",
+        "body_template": "Order {{order_reference}} has been cancelled by our team. A refund will be initiated if applicable.",
+        "message_variables": ["order_reference"],
+        "is_enabled": True,
+    }
+}
+
+_SELF_CANCEL_CUSTOMER_EVENT_CODE = "ORDER_SELF_CANCELLED"
+_SELF_CANCEL_CUSTOMER_DEFAULT_CHANNEL_TEMPLATES = {
+    "push": {
+        "title_template": "Order cancelled",
+        "body_template": "Your order {{order_reference}} has been cancelled. A refund will be processed to your original payment method.",
+        "message_variables": ["order_reference"],
+        "is_enabled": True,
+    }
+}
+
+_DELIVERY_RETURNED_EVENT_CODE = "ORDER_DELIVERY_RETURNED"
+_DELIVERY_RETURNED_DEFAULT_CHANNEL_TEMPLATES = {
+    "push": {
+        "title_template": "Delivery update",
+        "body_template": "Order {{order_reference}} could not be delivered and has been returned to our store. Our team will contact you to reschedule or process a refund.",
+        "message_variables": ["order_reference"],
+        "is_enabled": True,
+    }
+}
+
+_REFUND_DONE_EVENT_CODE = "ORDER_REFUND_COMPLETED"
+_REFUND_DONE_DEFAULT_CHANNEL_TEMPLATES = {
+    "push": {
+        "title_template": "Refund processed",
+        "body_template": "Your refund for order {{order_reference}} has been processed. Amount will reflect in 5-7 business days.",
+        "message_variables": ["order_reference"],
+        "is_enabled": True,
+    }
+}
+
 
 def _render_template(template: str, values: Dict[str, str]) -> str:
     """Replace ``{{name}}`` placeholders with string values (missing keys become empty)."""
@@ -228,6 +268,94 @@ class DeliveryAssignmentPushService:
                 "_description": "Fired when staff cancels an order that has a delivery agent assigned",
             },
             agent_user_id=agent_user_id,
+            order=order,
+            audit_user_id=audit_user_id,
+            audit_ip=audit_ip,
+        )
+
+    async def notify_customer_order_cancelled(
+        self,
+        *,
+        customer_user_id: UUID,
+        order: Order,
+        audit_user_id: UUID,
+        audit_ip: str,
+    ) -> None:
+        """Send FCM push to the customer when staff cancels their order."""
+        await self._send_push_to_agent(
+            event_code=_CANCEL_CUSTOMER_EVENT_CODE,
+            default_templates={
+                **_CANCEL_CUSTOMER_DEFAULT_CHANNEL_TEMPLATES,
+                "_event_name": "Order cancelled by staff",
+                "_description": "Fired when staff cancels a customer order",
+            },
+            agent_user_id=customer_user_id,
+            order=order,
+            audit_user_id=audit_user_id,
+            audit_ip=audit_ip,
+        )
+
+    async def notify_customer_self_cancelled(
+        self,
+        *,
+        customer_user_id: UUID,
+        order: Order,
+        audit_user_id: UUID,
+        audit_ip: str,
+    ) -> None:
+        """Send FCM push confirming cancellation when customer cancels their own order."""
+        await self._send_push_to_agent(
+            event_code=_SELF_CANCEL_CUSTOMER_EVENT_CODE,
+            default_templates={
+                **_SELF_CANCEL_CUSTOMER_DEFAULT_CHANNEL_TEMPLATES,
+                "_event_name": "Order self-cancelled",
+                "_description": "Fired when a customer cancels their own order",
+            },
+            agent_user_id=customer_user_id,
+            order=order,
+            audit_user_id=audit_user_id,
+            audit_ip=audit_ip,
+        )
+
+    async def notify_customer_delivery_returned(
+        self,
+        *,
+        customer_user_id: UUID,
+        order: Order,
+        audit_user_id: UUID,
+        audit_ip: str,
+    ) -> None:
+        """Send FCM push to the customer when delivery is returned to store."""
+        await self._send_push_to_agent(
+            event_code=_DELIVERY_RETURNED_EVENT_CODE,
+            default_templates={
+                **_DELIVERY_RETURNED_DEFAULT_CHANNEL_TEMPLATES,
+                "_event_name": "Delivery returned to store",
+                "_description": "Fired when delivery agent returns an order to the store",
+            },
+            agent_user_id=customer_user_id,
+            order=order,
+            audit_user_id=audit_user_id,
+            audit_ip=audit_ip,
+        )
+
+    async def notify_customer_refund_completed(
+        self,
+        *,
+        customer_user_id: UUID,
+        order: Order,
+        audit_user_id: UUID,
+        audit_ip: str,
+    ) -> None:
+        """Send FCM push to the customer when their refund has been processed."""
+        await self._send_push_to_agent(
+            event_code=_REFUND_DONE_EVENT_CODE,
+            default_templates={
+                **_REFUND_DONE_DEFAULT_CHANNEL_TEMPLATES,
+                "_event_name": "Refund completed",
+                "_description": "Fired when a refund is successfully processed via Razorpay",
+            },
+            agent_user_id=customer_user_id,
             order=order,
             audit_user_id=audit_user_id,
             audit_ip=audit_ip,

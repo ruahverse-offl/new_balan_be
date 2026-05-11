@@ -356,15 +356,21 @@ class OrdersService(BaseService):
                 )
             patch["delivery_assigned_at"] = get_current_ist_time()
 
-        # Resolve push targets — only set for events the delivery agent must know about.
-        notify_assigned_agent_id: Optional[UUID] = None   # fires DELIVERY_ASSIGNED push
-        notify_cancelled_agent_id: Optional[UUID] = None  # fires ORDER_CANCELLED_DELIVERY push
+        # Resolve push targets.
+        notify_assigned_agent_id: Optional[UUID] = None       # DELIVERY_ASSIGNED
+        notify_cancelled_agent_id: Optional[UUID] = None      # ORDER_CANCELLED_DELIVERY (agent)
+        notify_cancelled_customer_id: Optional[UUID] = None   # ORDER_CANCELLED_CUSTOMER (staff cancel)
+        notify_returned_customer_id: Optional[UUID] = None    # ORDER_DELIVERY_RETURNED (customer)
+
         if new_status == lc.DELIVERY_ASSIGNED:
             notify_assigned_agent_id = patch.get("delivery_assigned_user_id") or order.delivery_assigned_user_id
         elif "delivery_assigned_user_id" in patch:
             notify_assigned_agent_id = patch.get("delivery_assigned_user_id")
         elif new_status == lc.CANCELLED_BY_STAFF:
             notify_cancelled_agent_id = getattr(order, "delivery_assigned_user_id", None)
+            notify_cancelled_customer_id = getattr(order, "customer_id", None)
+        elif new_status == lc.DELIVERY_RETURNED:
+            notify_returned_customer_id = getattr(order, "customer_id", None)
 
         order = await self.repository.update(order_id, patch, updated_by, updated_ip)
         if not order:
@@ -381,6 +387,20 @@ class OrdersService(BaseService):
         if notify_cancelled_agent_id is not None:
             await push_svc.notify_order_cancelled(
                 agent_user_id=notify_cancelled_agent_id,
+                order=order,
+                audit_user_id=updated_by,
+                audit_ip=updated_ip,
+            )
+        if notify_cancelled_customer_id is not None:
+            await push_svc.notify_customer_order_cancelled(
+                customer_user_id=notify_cancelled_customer_id,
+                order=order,
+                audit_user_id=updated_by,
+                audit_ip=updated_ip,
+            )
+        if notify_returned_customer_id is not None:
+            await push_svc.notify_customer_delivery_returned(
+                customer_user_id=notify_returned_customer_id,
                 order=order,
                 audit_user_id=updated_by,
                 audit_ip=updated_ip,

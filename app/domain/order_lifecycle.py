@@ -64,6 +64,7 @@ STAFF_TRANSITIONS: dict[str, Set[str]] = {
     DELIVERY_ASSIGNED: {CANCELLED_BY_STAFF},
     PARCEL_TAKEN: {CANCELLED_BY_STAFF},
     OUT_FOR_DELIVERY: {CANCELLED_BY_STAFF},
+    DELIVERY_RETURNED: {DELIVERY_ASSIGNED, CANCELLED_BY_STAFF},  # retry delivery or cancel+refund
 }
 
 DELIVERY_TRANSITIONS: dict[str, Set[str]] = {
@@ -78,9 +79,9 @@ TERMINAL_STATUSES: FrozenSet[str] = frozenset(
         DELIVERED,
         CANCELLED_BY_STAFF,
         CANCELLED_BY_CUSTOMER,
-        DELIVERY_RETURNED,
         REFUND_INITIATED,
         REFUNDED,
+        # DELIVERY_RETURNED is intentionally excluded — staff can retry delivery or cancel+refund
     }
 )
 

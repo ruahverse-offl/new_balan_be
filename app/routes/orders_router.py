@@ -3,6 +3,7 @@ Orders Router
 FastAPI routes for orders resource
 """
 
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Literal
@@ -28,6 +29,8 @@ from app.utils.auth import get_current_user_id, get_current_user_id_optional
 from app.utils.rbac import RBACService
 from app.utils.request_utils import get_client_ip
 from app.domain import order_lifecycle as lc
+from app.services.razorpay_service import process_refund
+from app.services.delivery_assignment_push_service import DeliveryAssignmentPushService
 
 logger = logging.getLogger(__name__)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -280,7 +283,7 @@ async def customer_cancel_order(
     """
     Customer self-cancellation. Allowed while order is in ORDER_RECEIVED / ORDER_TAKEN /
     ORDER_PROCESSING / DELIVERY_ASSIGNED — i.e. before the parcel is physically packed.
-    Refunds are processed manually by staff from the admin panel.
+    All orders are prepaid; a Razorpay refund is initiated automatically on cancellation.
     """
     result = await db.execute(
         select(Order).where(Order.id == order_id, Order.is_deleted == False)  # noqa: E712
@@ -329,15 +332,74 @@ async def customer_cancel_order(
     payment_result = await db.execute(select(Payment).where(Payment.order_id == order_id))
     payment = payment_result.scalar_one_or_none()
 
+    refund_initiated = False
+    refund_status_val = None
     msg = "Order cancelled."
-    if payment and payment.payment_status == "SUCCESS":
-        msg = "Order cancelled. If a refund is applicable, our team will process it shortly."
+
+    if payment and payment.payment_status == "SUCCESS" and payment.refund_status not in ("INITIATED", "COMPLETED"):
+        razorpay_payment_id = payment.gateway_transaction_id
+        if razorpay_payment_id:
+            try:
+                refund_response = process_refund(razorpay_payment_id, None)
+                refund_id = refund_response.get("id", "")
+                razorpay_status = refund_response.get("status", "")
+                refund_status_val = "COMPLETED" if razorpay_status == "processed" else "INITIATED"
+                new_order_status = "REFUNDED" if refund_status_val == "COMPLETED" else "REFUND_INITIATED"
+
+                await db.execute(
+                    sa_update(Payment)
+                    .where(Payment.id == payment.id)
+                    .values(
+                        refund_status=refund_status_val,
+                        refund_amount=payment.amount,
+                        refund_transaction_id=refund_id,
+                        gateway_response=json.dumps(refund_response, default=str),
+                        updated_by=current_user_id,
+                        updated_ip=ip_address,
+                    )
+                )
+                await db.execute(
+                    sa_update(Order)
+                    .where(Order.id == order_id)
+                    .values(
+                        order_status=new_order_status,
+                        updated_by=current_user_id,
+                        updated_ip=ip_address,
+                    )
+                )
+                await db.commit()
+                refund_initiated = True
+                msg = "Order cancelled and refund initiated."
+            except Exception:
+                logger.exception("Auto-refund failed for customer cancel order_id=%s", order_id)
+                msg = "Order cancelled. Refund could not be initiated automatically — staff will process it."
+        else:
+            msg = "Order cancelled. No payment gateway ID found — staff will process refund."
+    elif payment and payment.payment_status == "SUCCESS":
+        msg = "Order cancelled. Refund already in progress."
+    else:
+        msg = "Order cancelled."
+
+    # Send push notification (fire-and-forget, failures don't block response).
+    try:
+        refreshed_order_result = await db.execute(select(Order).where(Order.id == order_id))
+        refreshed_order = refreshed_order_result.scalar_one_or_none()
+        if refreshed_order:
+            push_svc = DeliveryAssignmentPushService(db)
+            await push_svc.notify_customer_self_cancelled(
+                customer_user_id=current_user_id,
+                order=refreshed_order,
+                audit_user_id=current_user_id,
+                audit_ip=ip_address,
+            )
+    except Exception:
+        logger.exception("Self-cancel push failed for order_id=%s", order_id)
 
     return CustomerCancelResponse(
         order_id=str(order_id),
         order_status=lc.CANCELLED_BY_CUSTOMER,
-        refund_initiated=False,
-        refund_status=None,
+        refund_initiated=refund_initiated,
+        refund_status=refund_status_val,
         message=msg,
     )
 
